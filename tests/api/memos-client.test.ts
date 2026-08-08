@@ -84,6 +84,39 @@ describe("MemosClient", () => {
     );
   });
 
+  it("loads every comment page for fetched parents when threaded notes are enabled", async () => {
+    const parent = { name: "memos/parent-id", content: "Parent", timestamp: 42 };
+    const firstComment = { name: "memos/comment-one", content: "One", timestamp: 43 };
+    const secondComment = { name: "memos/comment-two", content: "Two", timestamp: 44, parent: "memos/parent-id" };
+    const request = new FakeRequestPort((_call, index) => {
+      if (index === 0) return { status: 200, text: "", json: { memos: [parent] } };
+      if (index === 1) return { status: 200, text: "", json: { memos: [firstComment], nextPageToken: "more-comments" } };
+      return { status: 200, text: "", json: { memos: [secondComment] } };
+    });
+
+    await expect(new MemosClient(request, "https://memos.example/self-hosted", "secret").list(0, true)).resolves.toEqual([
+      parent,
+      { ...firstComment, parent: "memos/parent-id" },
+      secondComment,
+    ]);
+    expect(request.calls.map(({ url }) => url)).toEqual([
+      "https://memos.example/self-hosted/api/v1/memos?pageSize=200",
+      "https://memos.example/self-hosted/api/v1/memos/parent-id/comments?pageSize=200",
+      "https://memos.example/self-hosted/api/v1/memos/parent-id/comments?pageSize=200&pageToken=more-comments",
+    ]);
+  });
+
+  it("does not request comments while threaded-note merging is disabled", async () => {
+    const request = new FakeRequestPort(() => ({
+      status: 200,
+      text: "",
+      json: { memos: [memo] },
+    }));
+
+    await new MemosClient(request, "https://memos.example", "secret").list(0, false);
+    expect(request.calls).toHaveLength(1);
+  });
+
   it("rejects repeated pagination tokens without accepting a truncated result", async () => {
     const request = new FakeRequestPort(() => ({
       status: 200,

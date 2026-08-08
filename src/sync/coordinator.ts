@@ -23,7 +23,7 @@ export interface CoordinatorPorts {
   token(): Promise<string | undefined>;
   /** Fetches every requested page atomically; rejected pagination must expose no partial records. */
   /** Receives the immutable URL/token snapshot that passed configuration validation. */
-  fetch(threshold: number, mode: EffectiveSyncMode, apiUrl: string, token: string): Promise<unknown[]>;
+  fetch(threshold: number, mode: EffectiveSyncMode, apiUrl: string, token: string, includeComments: boolean): Promise<unknown[]>;
   vault: VaultPort;
   dailyNotes: DailyNotesPort;
   request: RequestPort;
@@ -116,7 +116,7 @@ export class SyncCoordinator {
     const threshold = computeSyncThreshold(effectiveMode, state.cursor, cutoff);
     let records: unknown[];
     try {
-      records = await this.ports.fetch(threshold, effectiveMode, apiUrl, token);
+      records = await this.ports.fetch(threshold, effectiveMode, apiUrl, token, settings.mergeCommentsIntoParent);
     } catch (error) {
       diagnostics.push({
         severity: "error",

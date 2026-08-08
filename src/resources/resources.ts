@@ -58,8 +58,8 @@ export function planResources(
 
     const nameSegments = pathSegments(resource.name);
     const identity = nonEmpty(resource.id) ?? nonEmpty(resource.uid) ?? nameSegments.at(-1);
-    const filename = nonEmpty(resource.filename) ?? usableFilename(nameSegments.at(-1));
-    if (!identity || !filename) {
+    const remoteFilename = nonEmpty(resource.filename) ?? usableFilename(nameSegments.at(-1));
+    if (!identity || !remoteFilename) {
       diagnostics.push({
         severity: "warning",
         stage: "attachment",
@@ -69,8 +69,8 @@ export function planResources(
       continue;
     }
 
-    const endpoint = endpointFor(resource, nameSegments, filename, identity);
-    const localFilename = `${sanitizeAttachmentFilenamePart(identity)}-${sanitizeAttachmentFilenamePart(filename)}`;
+    const endpoint = endpointFor(resource, nameSegments, remoteFilename, identity);
+    const localFilename = `${sanitizeAttachmentFilenamePart(identity)}-${sanitizeAttachmentFilenamePart(renderableFilename(remoteFilename, resource.type))}`;
     const normalizedApiUrl = options.apiUrl.replace(/\/+$/, "");
     items.push({
       kind: "local",
@@ -90,13 +90,35 @@ function endpointFor(
   filename: string,
   identity: string,
 ): string {
-  if (nameSegments[0] === "attachments" && nonEmpty(resource.uid)) {
-    return `/file/attachments/${encodeURIComponent(resource.uid!)}/${encodeURIComponent(filename)}`;
+  const attachmentUid = nonEmpty(resource.uid) ?? (nameSegments[0] === "attachments" ? nameSegments.at(-1) : undefined);
+  if (nameSegments[0] === "attachments" && attachmentUid) {
+    return `/file/attachments/${encodeURIComponent(attachmentUid)}/${encodeURIComponent(filename)}`;
   }
   if (nameSegments[0] === "resources" && nameSegments.length > 0) {
     return `/file/resources/${encodeURIComponent(nameSegments.at(-1)!)}${`/${encodeURIComponent(filename)}`}`;
   }
   return `/o/r/${encodeURIComponent(nonEmpty(resource.uid) ?? nonEmpty(resource.id) ?? identity)}`;
+}
+
+/** Obsidian selects image renderers from the local extension. Memos permits
+ * extensionless attachment names such as `image`, so retain that remote name
+ * for the request but add the declared MIME subtype to the vault filename. */
+function renderableFilename(filename: string, type: string | undefined): string {
+  if (hasExtension(filename)) return filename;
+  const extension = imageExtension(type);
+  return extension ? `${filename}.${extension}` : filename;
+}
+
+function hasExtension(filename: string): boolean {
+  const extension = filename.split(".").at(-1);
+  return Boolean(extension && extension !== filename && /[A-Za-z0-9]/.test(extension));
+}
+
+function imageExtension(type: string | undefined): string | undefined {
+  const match = type?.trim().toLowerCase().match(/^image\/([a-z0-9.+-]+)$/);
+  if (!match) return undefined;
+  const extension = match[1]!.split("+")[0]!;
+  return /^[a-z0-9-]+$/.test(extension) ? extension : undefined;
 }
 
 function resourceLabel(resource: RemoteResource): string {

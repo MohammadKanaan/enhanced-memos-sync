@@ -36,7 +36,7 @@ export class MemosClient {
     this.baseUrl = apiUrl.replace(/\/+$/, "");
   }
 
-  async list(threshold: number): Promise<RemoteMemo[]> {
+  async list(threshold: number, includeComments = false): Promise<RemoteMemo[]> {
     const memos: RemoteMemo[] = [];
     const seenTokens = new Set<string>();
     let pageToken: string | undefined;
@@ -69,7 +69,7 @@ export class MemosClient {
       memos.push(...payload.memos);
 
       if (payload.nextPageToken === undefined || payload.nextPageToken === "") {
-        return memos;
+        return includeComments ? [...memos, ...await this.listComments(memos)] : memos;
       }
       if (seenTokens.has(payload.nextPageToken)) {
         throw new MemosApiError("Memos API returned a repeated page token.", undefined, this.token);
@@ -93,6 +93,63 @@ export class MemosClient {
     }
     return url.toString();
   }
+
+  /** Memos exposes replies through a per-parent endpoint instead of returning
+   * them from ListMemos. Fetch them only for threaded-note reconciliation. */
+  private async listComments(memos: RemoteMemo[]): Promise<RemoteMemo[]> {
+    const comments: RemoteMemo[] = [];
+    for (const parent of memos) {
+      if (nonEmptyString(parent.parent)) continue;
+      const parentName = nonEmptyString(parent.name);
+      if (!parentName) continue;
+      const parentId = trailingSegment(parentName);
+      if (!parentId) continue;
+
+      const seenTokens = new Set<string>();
+      let pageToken: string | undefined;
+      for (let page = 0; page < MAX_PAGES; page += 1) {
+        let response;
+        try {
+          response = await this.request.get({
+            url: this.buildCommentsUrl(parentId, pageToken),
+            headers: {
+              Authorization: `Bearer ${this.token}`,
+              Accept: "application/json",
+            },
+            responseType: "json",
+          });
+        } catch (cause) {
+          const message = cause instanceof Error ? cause.message : String(cause);
+          throw new MemosApiError(`Request to Memos comments API failed: ${message}`, undefined, this.token, cause);
+        }
+        if (response.status < 200 || response.status >= 300) {
+          throw new MemosApiError("Memos comments API returned HTTP " + response.status + ".", response.text, this.token);
+        }
+
+        const payload = validateListResponse(response.json);
+        comments.push(...payload.memos.map((comment) => nonEmptyString(comment.parent)
+          ? comment
+          : { ...comment, parent: parentName }));
+        if (payload.nextPageToken === undefined || payload.nextPageToken === "") break;
+        if (seenTokens.has(payload.nextPageToken)) {
+          throw new MemosApiError("Memos comments API returned a repeated page token.", undefined, this.token);
+        }
+        seenTokens.add(payload.nextPageToken);
+        pageToken = payload.nextPageToken;
+        if (page === MAX_PAGES - 1) {
+          throw new MemosApiError("Memos comments API pagination exceeded the page limit.", undefined, this.token);
+        }
+      }
+    }
+    return comments;
+  }
+
+  private buildCommentsUrl(parentId: string, pageToken: string | undefined): string {
+    const url = new URL(appendServerPath(this.baseUrl, `api/v1/memos/${encodeURIComponent(parentId)}/comments`));
+    url.searchParams.set("pageSize", String(PAGE_SIZE));
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+    return url.toString();
+  }
 }
 
 function validateListResponse(value: unknown): ListMemosResponse {
@@ -107,4 +164,12 @@ function validateListResponse(value: unknown): ListMemosResponse {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function trailingSegment(value: string): string | undefined {
+  return value.split("/").filter(Boolean).at(-1);
 }

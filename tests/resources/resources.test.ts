@@ -74,6 +74,19 @@ describe("resource planning", () => {
     }));
   });
 
+  it("keeps the remote request filename but gives extensionless images a renderable local extension", () => {
+    const result = planResources(
+      [{ name: "attachments/7hSX2q7jWzZwrttv6puFe", filename: "image", type: "image/png" }],
+      { apiUrl: "https://memos.example", attachmentFolder: "attachments", skipImages: false },
+    );
+
+    expect(result.items).toEqual([expect.objectContaining({
+      markdown: "![[7hSX2q7jWzZwrttv6puFe-image.png]]",
+      path: "attachments/7hSX2q7jWzZwrttv6puFe-image.png",
+      url: "https://memos.example/file/attachments/7hSX2q7jWzZwrttv6puFe/image",
+    })]);
+  });
+
   it("warns and creates no local work for missing identity or filename", () => {
     const result = planResources(
       [{ filename: "only-file" }, { id: "only-id", name: "" }],

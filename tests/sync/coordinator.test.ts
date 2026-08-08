@@ -105,16 +105,20 @@ describe("sync coordinator", () => {
     expect(fetchCalls[0]?.mode).toBe(effectiveMode);
   });
 
-  it("passes the run's API URL and token snapshot to the fetch boundary", async () => {
-    const inputs: Array<{ apiUrl: string | undefined; token: string | undefined }> = [];
+  it("passes the run's API URL, token, and threaded-comment snapshot to the fetch boundary", async () => {
+    const inputs: Array<{ apiUrl: string | undefined; token: string | undefined; includeComments: boolean | undefined }> = [];
     const notices: string[] = [];
     const vault = new InMemoryVault();
     const coordinator = new SyncCoordinator({
-      settings: () => ({ ...DEFAULT_SETTINGS, apiUrl: "https://snapshot.example" }),
+      settings: () => ({ ...DEFAULT_SETTINGS, apiUrl: "https://snapshot.example", mergeCommentsIntoParent: true }),
       state: () => ({ renderSnapshots: {} }),
       token: async () => "snapshot-token",
       fetch: ((...args: unknown[]) => {
-        inputs.push({ apiUrl: args[2] as string | undefined, token: args[3] as string | undefined });
+        inputs.push({
+          apiUrl: args[2] as string | undefined,
+          token: args[3] as string | undefined,
+          includeComments: args[4] as boolean | undefined,
+        });
         return Promise.resolve([]);
       }) as never,
       vault,
@@ -128,7 +132,11 @@ describe("sync coordinator", () => {
     });
 
     await expect(coordinator.run("force")).resolves.toMatchObject({ complete: true });
-    expect(inputs).toEqual([{ apiUrl: "https://snapshot.example", token: "snapshot-token" }]);
+    expect(inputs).toEqual([{
+      apiUrl: "https://snapshot.example",
+      token: "snapshot-token",
+      includeComments: true,
+    }]);
   });
 
   it("renders notes and daily embeds, writes snapshots, and commits the max normalized cursor", async () => {
