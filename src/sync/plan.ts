@@ -66,8 +66,9 @@ export function buildSyncPlan(input: BuildSyncPlanInput): SyncPlan {
     const date = output.thread.parent.localDate;
     const group = authoritativeByDate.get(date) ?? [];
     group.push(output.basename);
-    authoritativeByDate.set(date, freeze(group));
+    authoritativeByDate.set(date, group);
   }
+  for (const [date, paths] of authoritativeByDate) authoritativeByDate.set(date, freeze(paths));
 
   const dailyDates = new Set(authoritativeByDate.keys());
   if (input.mode === "full") {
@@ -146,7 +147,7 @@ function cloneThread(thread: MemoThread): MemoThread {
 function cloneMemo<T extends MemoThread["parent"]>(memo: T): T {
   const clone = {
     ...memo,
-    resources: freeze(memo.resources.map((resource) => freeze({ ...resource }))),
+    resources: freeze(memo.resources.map(cloneResource)),
     source: cloneSource(memo.source),
   };
   return freeze(clone) as T;
@@ -162,7 +163,13 @@ function cloneSource(source: MemoThread["parent"]["source"]): MemoThread["parent
 }
 
 function cloneResources(resources: MemoThread["parent"]["source"]["resources"]): MemoThread["parent"]["source"]["resources"] {
-  return resources ? freeze(resources.map((resource) => freeze({ ...resource }))) : undefined;
+  return resources ? freeze(resources.map(cloneResource)) : undefined;
+}
+
+function cloneResource<T>(resource: T): T {
+  return typeof resource === "object" && resource !== null && !Array.isArray(resource)
+    ? freeze({ ...resource }) as T
+    : resource;
 }
 
 function uniquePaths(paths: string[]): string[] {

@@ -2,26 +2,293 @@ import { describe, expect, it } from "vitest";
 
 import { SyncCoordinator } from "../../src/sync/coordinator";
 import { DEFAULT_SETTINGS } from "../../src/settings/defaults";
+import type { PluginSettings, SyncState } from "../../src/settings/types";
+import { FakeDailyNotes } from "../support/fake-daily-notes";
+import { FakePersistence } from "../support/fake-persistence";
+import { FakeRequestPort } from "../support/fake-request-port";
+import { memo } from "../support/fixtures";
+import { InMemoryVault } from "../support/in-memory-vault";
+
+const now = () => new Date(2026, 0, 20, 12);
+
+function setup(options: {
+  records?: unknown[];
+  state?: SyncState;
+  settings?: Partial<PluginSettings>;
+  fetch?: (threshold: number, mode: "incremental" | "full") => Promise<unknown[]>;
+  token?: string;
+  attachmentStatus?: number;
+  attachmentStatuses?: number[];
+} = {}) {
+  const notices: string[] = [];
+  const vault = new InMemoryVault();
+  const dailyNotes = new FakeDailyNotes();
+  const persistence = new FakePersistence(options.state ?? { renderSnapshots: {} });
+  const fetchCalls: Array<{ threshold: number; mode: "incremental" | "full" }> = [];
+  const coordinator = new SyncCoordinator({
+    settings: () => ({ ...DEFAULT_SETTINGS, apiUrl: "https://memos.example", ...options.settings }),
+    state: persistence.state,
+    token: async () => "token" in options ? options.token : "secret",
+    fetch: async (threshold, mode) => {
+      fetchCalls.push({ threshold, mode });
+      return options.fetch ? options.fetch(threshold, mode) : options.records ?? [];
+    },
+    vault,
+    dailyNotes,
+    request: new FakeRequestPort((_call, index) => ({
+      status: options.attachmentStatuses?.[index] ?? options.attachmentStatus ?? 200,
+      text: "attachment response",
+      arrayBuffer: (options.attachmentStatuses?.[index] ?? options.attachmentStatus ?? 200) >= 300 ? undefined : new Uint8Array([1]).buffer,
+    })),
+    commit: persistence.commit,
+    notice: (message) => notices.push(message),
+    now,
+  });
+  return { coordinator, vault, dailyNotes, persistence, fetchCalls, notices };
+}
 
 describe("sync coordinator", () => {
-  it("resolves smart modes, commits state only on complete runs, and rejects overlap", async () => {
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    const notices: string[] = [];
-    const coordinator = new SyncCoordinator({
-      settings: () => ({ ...DEFAULT_SETTINGS, apiUrl: "https://memos.example" }),
-      state: () => ({ cursor: undefined, renderSnapshots: {} }),
-      token: async () => "token",
-      fetch: async () => { await gate; return [{ timestamp: 10 }]; },
-      commit: async () => {},
-      notice: (message) => notices.push(message),
-      now: () => new Date(2026, 0, 1),
+  it("reports disabled or incomplete configuration without fetching", async () => {
+    const disabled = setup({ settings: { enabled: false } });
+    const missingToken = setup({ token: undefined });
+
+    await expect(disabled.coordinator.run("force")).resolves.toMatchObject({ complete: false });
+    await expect(missingToken.coordinator.run("force")).resolves.toMatchObject({ complete: false });
+    expect(disabled.fetchCalls).toEqual([]);
+    expect(missingToken.fetchCalls).toEqual([]);
+    expect(missingToken.notices.at(-1)).toContain("configuration is incomplete");
+  });
+
+  it("rejects unsafe persisted folders at the settings stage before network work", async () => {
+    for (const settings of [
+      { memoNoteFolder: "Memos/../private" },
+      { attachmentFolder: "attachments/../../private" },
+    ]) {
+      const configured = setup({ settings });
+      const result = await configured.coordinator.run("force");
+      expect(result).toMatchObject({ complete: false });
+      expect(result.diagnostics).toContainEqual(expect.objectContaining({ severity: "error", stage: "settings" }));
+      expect(configured.fetchCalls).toEqual([]);
+    }
+  });
+
+  it.each([
+    ["smart", undefined, "full"],
+    ["smart", 100, "incremental"],
+    ["incremental", undefined, "incremental"],
+    ["force", 100, "full"],
+  ] as const)("resolves %s with cursor %s as %s", async (requestedMode, cursor, effectiveMode) => {
+    const { coordinator, fetchCalls } = setup({ state: { ...(cursor ? { cursor } : {}), renderSnapshots: {} } });
+    await expect(coordinator.run(requestedMode)).resolves.toMatchObject({ complete: true, effectiveMode });
+    expect(fetchCalls[0]?.mode).toBe(effectiveMode);
+  });
+
+  it("renders notes and daily embeds, writes snapshots, and commits the max normalized cursor", async () => {
+    const { coordinator, vault, dailyNotes, persistence } = setup({ records: [memo(1_768_867_200)] });
+
+    await expect(coordinator.run("force")).resolves.toMatchObject({
+      complete: true,
+      counts: { fetched: 1, normalized: 1, memoNotesWritten: 1, dailyNotesModified: 1 },
+    });
+    expect([...vault.text.keys()]).toEqual(["Memos/2026-01-20-1768867200.md"]);
+    expect([...dailyNotes.notes.values()][0]?.content).toContain("![[2026-01-20-1768867200]]");
+    expect(persistence.state().cursor).toBe(1_768_867_200);
+    expect(persistence.state().renderSnapshots["memos/1768867200"]?.notePath).toBe("Memos/2026-01-20-1768867200.md");
+  });
+
+  it("contains malformed resource records as redacted partial attachment errors", async () => {
+    const { coordinator, vault } = setup({
+      records: [memo(1_768_867_200, { attachments: [null] as never })],
     });
 
-    const first = coordinator.run("smart");
+    const result = await coordinator.run("force");
+    expect(result).toMatchObject({ complete: false });
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ severity: "error", stage: "attachment" }));
+    expect(result.diagnostics.map(({ message }) => message).join("\n")).not.toContain("secret");
+    expect(vault.text.has("Memos/2026-01-20-1768867200.md")).toBe(true);
+  });
+
+  it("never mutates the vault when fetching fails", async () => {
+    const { coordinator, vault, persistence } = setup({ fetch: async () => { throw new Error("network secret"); } });
+
     await expect(coordinator.run("force")).resolves.toMatchObject({ complete: false });
+    expect(vault.text).toEqual(new Map());
+    expect(persistence.commits).toEqual([]);
+  });
+
+  it("updates an existing note from a remote edit and does not duplicate attachment embeds", async () => {
+    const { coordinator, vault } = setup({ records: [memo(1_768_867_200, {
+      content: "revised remote prose",
+      attachments: [{ id: "file", filename: "report.pdf" }],
+    })] });
+    vault.text.set("Memos/2026-01-20-1768867200.md", "---\ncustom: retained\n---\nold prose\n");
+
+    await expect(coordinator.run("force")).resolves.toMatchObject({ complete: true, counts: { memoNotesWritten: 1 } });
+    const rewritten = vault.text.get("Memos/2026-01-20-1768867200.md") ?? "";
+    expect(rewritten).toContain("revised remote prose");
+    expect(rewritten).toContain("custom: retained");
+    expect(rewritten.match(/!\[\[file-report\.pdf\]\]/g)).toHaveLength(1);
+  });
+
+  it("keeps successful writes but withholds deletion and cursor commit after an attachment failure", async () => {
+    const { coordinator, vault, persistence } = setup({
+      state: { cursor: 10, renderSnapshots: {} },
+      records: [memo(1_768_867_200, { attachments: [{ id: "broken", filename: "broken.pdf" }] })],
+      attachmentStatus: 500,
+    });
+    vault.text.set("Memos/2026-01-19-10.md", managedNote(10, "2026-01-19"));
+    const result = await coordinator.run("force");
+
+    expect(result.complete).toBe(false);
+    expect(vault.text.has("Memos/2026-01-20-1768867200.md")).toBe(true);
+    expect(vault.trashed).toEqual([]);
+    expect(persistence.state().cursor).toBe(10);
+  });
+
+  it("keeps independent memo writes and makes a failed memo write partial", async () => {
+    const { coordinator, vault, persistence } = setup({
+      state: { cursor: 10, renderSnapshots: {} },
+      records: [memo(1_768_867_200), memo(1_768_867_201)],
+    });
+    vault.failWritesFor.add("Memos/2026-01-20-1768867201.md");
+
+    await expect(coordinator.run("force")).resolves.toMatchObject({ complete: false, counts: { memoNotesWritten: 1 } });
+    expect(vault.text.has("Memos/2026-01-20-1768867200.md")).toBe(true);
+    expect(vault.text.has("Memos/2026-01-20-1768867201.md")).toBe(false);
+    expect(persistence.state().cursor).toBe(10);
+  });
+
+  it("does not delete during incremental sync but deletes revalidated stale force candidates", async () => {
+    const incremental = setup({ state: { cursor: 100, renderSnapshots: {} } });
+    incremental.vault.text.set("Memos/2026-01-19-10.md", managedNote(10, "2026-01-19"));
+    await incremental.coordinator.run("incremental");
+    expect(incremental.vault.trashed).toEqual([]);
+
+    const forced = setup();
+    forced.vault.text.set("Memos/2026-01-19-10.md", managedNote(10, "2026-01-19"));
+    await expect(forced.coordinator.run("force")).resolves.toMatchObject({ complete: true, counts: { memoNotesTrashed: 1 } });
+    expect(forced.vault.trashed).toEqual(["Memos/2026-01-19-10.md"]);
+  });
+
+  it("returns incomplete and retains cursor when the terminal state commit fails after deletion", async () => {
+    const { coordinator, vault, persistence } = setup({ state: { cursor: 99, lastSuccessfulSyncDate: "2026-01-18", renderSnapshots: {} } });
+    vault.text.set("Memos/2026-01-19-10.md", managedNote(10, "2026-01-19"));
+    vault.text.set("Memos/2026-01-19-11.md", managedNote(11, "2026-01-19"));
+    persistence.failCommitAt = 0;
+
+    const result = await coordinator.run("force");
+    expect(result).toMatchObject({ complete: false });
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ severity: "error", stage: "state" }));
+    expect(vault.trashed).toEqual(["Memos/2026-01-19-10.md", "Memos/2026-01-19-11.md"]);
+    expect(persistence.state()).toMatchObject({ cursor: 99, lastSuccessfulSyncDate: "2026-01-18" });
+  });
+
+  it("keeps ineligible candidates as warnings without blocking other force deletion", async () => {
+    const { coordinator, vault, persistence } = setup({ state: { cursor: 99, renderSnapshots: {} } });
+    vault.text.set("Memos/2026-01-19-10.md", managedNote(10, "2026-01-19"));
+    vault.text.set("Memos/2026-01-19-11.md", "unmanaged note");
+
+    const result = await coordinator.run("force");
+    expect(result).toMatchObject({ complete: true });
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ severity: "warning", stage: "deletion" }));
+    expect(vault.trashed).toEqual(["Memos/2026-01-19-10.md"]);
+    expect(persistence.state().cursor).toBeUndefined();
+  });
+
+  it("returns incomplete without committing the cursor when a later trash fails", async () => {
+    const { coordinator, vault, persistence } = setup({ state: { cursor: 99, renderSnapshots: {} } });
+    vault.text.set("Memos/2026-01-19-10.md", managedNote(10, "2026-01-19"));
+    vault.text.set("Memos/2026-01-19-11.md", managedNote(11, "2026-01-19"));
+    vault.failTrashesFor.add("Memos/2026-01-19-11.md");
+
+    const result = await coordinator.run("force");
+    expect(result).toMatchObject({ complete: false });
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ severity: "error", stage: "deletion", path: "Memos/2026-01-19-11.md" }));
+    expect(vault.trashed).toEqual(["Memos/2026-01-19-10.md"]);
+    expect(persistence.state().cursor).toBe(99);
+  });
+
+  it("treats invalid memos, daily failures, and state save failures as partial without advancing the cursor", async () => {
+    const invalid = setup({ state: { cursor: 10, renderSnapshots: {} }, records: [{ content: "bad" }] });
+    await expect(invalid.coordinator.run("force")).resolves.toMatchObject({ complete: false });
+    expect(invalid.persistence.state().cursor).toBe(10);
+
+    const daily = setup({ state: { cursor: 10, renderSnapshots: {} }, records: [memo(1_768_867_200)] });
+    daily.dailyNotes.failDates.add("2026-01-20");
+    await expect(daily.coordinator.run("force")).resolves.toMatchObject({ complete: false });
+    expect(daily.persistence.state().cursor).toBe(10);
+
+    const state = setup({ records: [memo(1_768_867_200)] });
+    state.persistence.failCommitAt = 0;
+    await expect(state.coordinator.run("force")).resolves.toMatchObject({ complete: false });
+    expect(state.persistence.state().cursor).toBeUndefined();
+  });
+
+  it("continues daily-note reconciliation across dates and clears stale embeds for an empty full window", async () => {
+    const empty = setup();
+    empty.dailyNotes.seed("2026-01-19", "daily/old.md", "# Day\n\n## 📓 Memos\n![[2026-01-19-10]]\n");
+    await expect(empty.coordinator.run("force")).resolves.toMatchObject({ complete: true, counts: { dailyNotesModified: 1 } });
+    expect(empty.dailyNotes.notes.get("daily/old.md")?.content).not.toContain("![[2026-01-19-10]]");
+
+    const multiDate = setup({ records: [memo(1_768_780_800), memo(1_768_867_200)] });
+    multiDate.dailyNotes.failDates.add("2026-01-19");
+    await expect(multiDate.coordinator.run("force")).resolves.toMatchObject({ complete: false, counts: { dailyNotesModified: 1 } });
+    expect(multiDate.dailyNotes.notes.get("daily/2026-01-20.md")?.content).toContain("![[2026-01-20-1768867200]]");
+  });
+
+  it("persists earlier render snapshots and isolates malformed frontmatter when a later memo is partial", async () => {
+    const { coordinator, vault, persistence } = setup({ records: [memo(1_768_867_200), memo(1_768_867_201)] });
+    vault.text.set("Memos/2026-01-20-1768867201.md", "---\nnot: [valid\n---\nold\n");
+
+    const result = await coordinator.run("force");
+    expect(result).toMatchObject({ complete: false, counts: { memoNotesWritten: 1 } });
+    expect(persistence.state().renderSnapshots["memos/1768867200"]?.notePath).toBe("Memos/2026-01-20-1768867200.md");
+    expect(vault.text.get("Memos/2026-01-20-1768867200.md")).toContain("memo 1768867200");
+  });
+
+  it("redacts the token from diagnostics emitted by every failing boundary", async () => {
+    const { coordinator, dailyNotes } = setup({ fetch: async () => { throw new Error("fetch secret"); } });
+    const fetch = await coordinator.run("force");
+    expect(fetch.diagnostics.map(({ message }) => message).join("\n")).not.toContain("secret");
+
+    const planning = setup();
+    planning.dailyNotes.listError = new Error("daily secret");
+    const result = await planning.coordinator.run("force");
+    expect(result.diagnostics.map(({ message }) => message).join("\n")).not.toContain("secret");
+    expect(dailyNotes.notes).toEqual(new Map());
+  });
+
+  it("clears a full empty cursor, retains an incremental empty cursor, and rejects overlap", async () => {
+    const full = setup({ state: { cursor: 100, renderSnapshots: {} } });
+    await full.coordinator.run("force");
+    expect(full.persistence.state().cursor).toBeUndefined();
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const incremental = setup({ state: { cursor: 100, renderSnapshots: {} }, fetch: async () => { await gate; return []; } });
+    const first = incremental.coordinator.run("incremental");
+    await expect(incremental.coordinator.run("force")).resolves.toMatchObject({ complete: false });
     release();
-    await expect(first).resolves.toMatchObject({ complete: true, effectiveMode: "full" });
-    expect(notices.some((message) => message.includes("already running"))).toBe(true);
+    await first;
+    expect(incremental.persistence.state().cursor).toBe(100);
+    expect(incremental.notices.some((notice) => notice.includes("already running"))).toBe(true);
+  });
+
+  it("retries a partial attachment run idempotently", async () => {
+    const { coordinator, vault, dailyNotes, persistence } = setup({
+      records: [memo(1_768_867_200, { attachments: [{ id: "retry", filename: "retry.pdf" }] })],
+      attachmentStatuses: [500, 200],
+    });
+
+    await expect(coordinator.run("force")).resolves.toMatchObject({ complete: false });
+    await expect(coordinator.run("force")).resolves.toMatchObject({ complete: true, counts: { attachmentsDownloaded: 1 } });
+    expect(vault.binary.size).toBe(1);
+    expect([...vault.text.keys()]).toEqual(["Memos/2026-01-20-1768867200.md"]);
+    expect([...dailyNotes.notes.values()][0]?.content.match(/!\[\[2026-01-20-1768867200\]\]/g)).toHaveLength(1);
+    expect(persistence.state().cursor).toBe(1_768_867_200);
   });
 });
+
+function managedNote(timestamp: number, date: string): string {
+  return `---\nmemo_id: ${timestamp}\ntimestamp: ${timestamp}\ndate: ${date}\ntags: [memo, daily-record]\nsource: "Default (https://memos.example)"\n---\n`;
+}

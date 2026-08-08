@@ -40,8 +40,19 @@ export function validateNonNegativeInteger(
 }
 
 export function normalizeFolder(input: string, fallback: string): string {
-  const normalized = input.trim().replace(/^\/+|\/+$/g, "");
-  return normalized || fallback;
+  return normalizeFolderPath(input, fallback);
+}
+
+export function validateFolder(
+  input: string,
+  previous: string,
+  fallback: string,
+): ValidationResult<string> {
+  try {
+    return { value: normalizeFolder(input, fallback) };
+  } catch {
+    return { value: previous, error: "Folder paths cannot contain traversal segments." };
+  }
 }
 
 export function normalizeHeader(input: string): string {
@@ -63,3 +74,4 @@ export function validateCommentOrderRegex(
     return { value: previous, error: "Enter a valid regular expression." };
   }
 }
+import { normalizeFolderPath } from "../core/paths";

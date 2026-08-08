@@ -73,4 +73,14 @@ describe("resource planning", () => {
     expect(result.diagnostics).toHaveLength(2);
     expect(result.diagnostics.every((diagnostic) => diagnostic.severity === "warning")).toBe(true);
   });
+
+  it("treats malformed resource entries as attachment errors and normalizes the attachment folder", () => {
+    const result = planResources(
+      [null, { id: "file", filename: "file.pdf" }] as never,
+      { apiUrl: "https://memos.example", attachmentFolder: " /attachments/ ", skipImages: false },
+    );
+
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ severity: "error", stage: "attachment" }));
+    expect(result.items).toContainEqual(expect.objectContaining({ path: "attachments/file-file.pdf" }));
+  });
 });

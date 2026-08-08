@@ -5,6 +5,7 @@ import {
   normalizeHeader,
   validateApiUrl,
   validateCommentOrderRegex,
+  validateFolder,
   validateNonNegativeInteger,
 } from "../../src/settings/validation";
 
@@ -35,6 +36,14 @@ describe("settings validation", () => {
     expect(normalizeFolder(" /Memos/Archive/ ", "Memos")).toBe("Memos/Archive");
     expect(normalizeFolder(" /// ", "attachments")).toBe("attachments");
     expect(normalizeHeader("  ## 📓 Memos  ")).toBe("## 📓 Memos");
+  });
+
+  it("rejects traversal folder input without replacing the previous saved folder", () => {
+    expect(validateFolder("Memos/../private", "Memos", "Memos")).toMatchObject({
+      value: "Memos",
+      error: expect.any(String),
+    });
+    expect(() => normalizeFolder("attachments/../../outside", "attachments")).toThrow("traversal");
   });
 
   it("keeps the prior regex when a non-blank pattern is invalid", () => {

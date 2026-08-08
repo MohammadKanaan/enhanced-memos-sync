@@ -1,4 +1,4 @@
-import { redactApiToken } from "../core/diagnostics";
+import { normalizeServerBody, redactApiToken } from "../core/diagnostics";
 import type { SyncDiagnostic } from "../core/types";
 import type { RequestPort } from "../sync/ports";
 import type { PlannedResource } from "./resources";
@@ -27,11 +27,24 @@ export async function downloadMissingAttachments(
   const diagnostics: SyncDiagnostic[] = [];
   let downloaded = 0;
 
+  const unavailableFolders = new Set<string>();
   for (const folder of new Set(localResources.map((resource) => resource.path.slice(0, resource.path.lastIndexOf("/"))))) {
-    await vault.ensureFolder(folder);
+    try {
+      await vault.ensureFolder(folder);
+    } catch (error) {
+      unavailableFolders.add(folder);
+      diagnostics.push({
+        severity: "error",
+        stage: "attachment",
+        path: folder,
+        message: redactApiToken(`Attachment folder setup failed: ${error instanceof Error ? error.message : String(error)}`, token),
+      });
+    }
   }
 
   for (const resource of localResources) {
+    const folder = resource.path.slice(0, resource.path.lastIndexOf("/"));
+    if (unavailableFolders.has(folder)) continue;
     try {
       if (await vault.exists(resource.path)) {
         continue;
@@ -69,6 +82,6 @@ function downloadDiagnostic(resource: PlannedResource, detail: string, token: st
     stage: "attachment",
     ...(resource.resourceId ? { resourceId: resource.resourceId } : {}),
     ...(resource.path ? { path: resource.path } : {}),
-    message: redactApiToken(`Attachment download failed: ${detail}`, token),
+    message: `Attachment download failed: ${normalizeServerBody(redactApiToken(detail, token))}`,
   };
 }

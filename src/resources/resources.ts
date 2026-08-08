@@ -1,4 +1,4 @@
-import { sanitizeAttachmentFilenamePart } from "../core/paths";
+import { normalizeFolderPath, sanitizeAttachmentFilenamePart } from "../core/paths";
 import type { RemoteResource, SyncDiagnostic } from "../core/types";
 
 export const GENERIC_EXTERNAL_RESOURCE_LABEL = "resource";
@@ -28,8 +28,18 @@ export function planResources(
 ): ResourcePlanResult {
   const items: PlannedResource[] = [];
   const diagnostics: SyncDiagnostic[] = [];
+  const attachmentFolder = normalizeFolderPath(options.attachmentFolder, "attachments");
 
-  for (const resource of resources) {
+  for (const candidate of resources as unknown[]) {
+    if (!isRecord(candidate)) {
+      diagnostics.push({
+        severity: "error",
+        stage: "attachment",
+        message: "Resource entry is malformed and was skipped.",
+      });
+      continue;
+    }
+    const resource = toRemoteResource(candidate);
     const externalLink = nonEmpty(resource.externalLink);
     const image = resource.type?.toLocaleLowerCase().includes("image") ?? false;
     if (image && options.skipImages) {
@@ -64,7 +74,7 @@ export function planResources(
     items.push({
       kind: "local",
       markdown: `![[${localFilename}]]`,
-      path: `${options.attachmentFolder}/${localFilename}`,
+      path: `${attachmentFolder}/${localFilename}`,
       url: new URL(endpoint, `${normalizedApiUrl}/`).toString(),
       resourceId: identity,
     });
@@ -104,4 +114,23 @@ function usableFilename(value: string | undefined): string | undefined {
 function nonEmpty(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized || undefined;
+}
+
+function toRemoteResource(value: Record<string, unknown>): RemoteResource {
+  return {
+    ...(stringValue(value.id) ? { id: stringValue(value.id) } : {}),
+    ...(stringValue(value.uid) ? { uid: stringValue(value.uid) } : {}),
+    ...(stringValue(value.name) ? { name: stringValue(value.name) } : {}),
+    ...(stringValue(value.filename) ? { filename: stringValue(value.filename) } : {}),
+    ...(stringValue(value.type) ? { type: stringValue(value.type) } : {}),
+    ...(stringValue(value.externalLink) ? { externalLink: stringValue(value.externalLink) } : {}),
+  };
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
