@@ -1,6 +1,6 @@
 {
   "name": "enhanced-memos-sync",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Sync one Memos account into individual Obsidian Markdown notes.",
   "main": "main.js",
   "scripts": {
@@ -10,7 +10,8 @@
     "test:watch": "vitest",
     "bundle": "bun esbuild.config.mjs production",
     "build": "bun run typecheck && bun run bundle",
-    "check": "bun run typecheck && bun run test && bun run bundle"
+    "check": "bun run typecheck && bun run test && bun run bundle",
+    "version": "bash scripts/set-version.sh"
   },
   "dependencies": {
     "diff": "^8.0.2",

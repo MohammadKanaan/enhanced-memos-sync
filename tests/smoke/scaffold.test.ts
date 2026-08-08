@@ -11,10 +11,26 @@ describe("plugin scaffold", () => {
     expect(manifest).toMatchObject({
       id: "enhanced-memos-sync",
       name: "Enhanced Memos Sync",
-      version: "0.1.0",
       minAppVersion: "1.6.6",
       author: "Mohammad Kanaan",
       isDesktopOnly: true,
     });
+  });
+
+  it("keeps manifest, package, and versions.json in sync", () => {
+    const manifest = JSON.parse(
+      readFileSync(resolve(process.cwd(), "manifest.json"), "utf8"),
+    ) as { version: string; minAppVersion: string };
+
+    const pkg = JSON.parse(
+      readFileSync(resolve(process.cwd(), "package.json"), "utf8"),
+    ) as { version: string };
+
+    const versions = JSON.parse(
+      readFileSync(resolve(process.cwd(), "versions.json"), "utf8"),
+    ) as Record<string, string>;
+
+    expect(pkg.version).toBe(manifest.version);
+    expect(versions[manifest.version]).toBe(manifest.minAppVersion);
   });
 });
