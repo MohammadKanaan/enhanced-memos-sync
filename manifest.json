@@ -3,6 +3,8 @@
   "name": "Enhanced Memos Sync",
   "version": "0.1.0",
   "minAppVersion": "1.6.6",
+  "description": "Sync memos from a Memos server into individual Markdown notes linked inside your Daily Notes.",
   "author": "Mohammad Kanaan",
+  "authorUrl": "https://github.com/MohammadKanaan",
   "isDesktopOnly": true
 }
