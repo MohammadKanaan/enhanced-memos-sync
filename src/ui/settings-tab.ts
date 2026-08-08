@@ -157,7 +157,6 @@ export class EnhancedMemosSyncSettingsTab extends PluginSettingTab {
 
   display(): void {
     this.containerEl.empty();
-    new Setting(this.containerEl).setName("Enhanced Memos Sync").setHeading();
 
     // Account
     new Setting(this.containerEl).setName("Account").setHeading();
