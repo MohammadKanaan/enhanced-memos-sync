@@ -113,7 +113,7 @@ export default class EnhancedMemosSyncPlugin extends Plugin {
 
   async updateSetting<K extends keyof PluginSettings>(key: K, value: PluginSettings[K]): Promise<void> {
     const previous = this.settings;
-    const next = { ...previous, [key]: value } as PluginSettings;
+    const next = { ...previous, [key]: value };
     // Make the next edit build on this one even while PersistedStore serializes disk writes.
     this.settings = next;
     if (key === "periodicSyncIntervalMinutes") {

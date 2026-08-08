@@ -7,6 +7,7 @@ import { EnhancedMemosSyncSettingsTab, type SettingsTabHost } from "../../src/ui
 interface MockSetting {
   name: string;
   text?: { inputEl: { type: string }; value: string; trigger(value: string): Promise<void> };
+  toggle?: { value: boolean };
   descEl: { children: Array<{ text: string }> };
 }
 
@@ -42,11 +43,13 @@ describe("settings tab", () => {
     const tab = new EnhancedMemosSyncSettingsTab(plugin);
     tab.display();
 
-    expect(MockSettings.instances.map((candidate) => candidate.name)).toEqual([
-      "Account name", "Enabled", "API URL", "API token", "Daily-note header", "Sync-days limit",
-      "Memo-note folder", "Attachment folder", "Create missing daily notes", "Skip images",
-      "Merge comments into parent", "Comment-order regex", "Sync on startup", "Startup delay",
-      "Skip startup sync if synced today", "Periodic sync interval",
+    expect(MockSettings.instances.filter((c) => c.text || c.toggle).map((candidate) => candidate.name)).toEqual([
+      "Account name", "Enabled",
+      "API URL", "API token",
+      "Daily-note header", "Create missing daily notes",
+      "Memo-note folder", "Attachment folder",
+      "Sync-days limit", "Skip images", "Merge comments into parent", "Comment-order regex",
+      "Sync on startup", "Startup delay", "Skip startup sync if synced today", "Periodic sync interval",
     ]);
     expect(setting("API token").text?.inputEl.type).toBe("password");
     await Promise.resolve();

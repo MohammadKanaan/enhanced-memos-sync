@@ -19,7 +19,7 @@ export function extractUnknownFrontmatter(content: string | undefined): Record<s
   if (end === -1) {
     return {};
   }
-  const parsed = YAML.parse(content.slice(4, end));
+  const parsed: unknown = YAML.parse(content.slice(4, end));
   if (!isRecord(parsed)) {
     return {};
   }

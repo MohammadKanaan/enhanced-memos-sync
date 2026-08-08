@@ -80,6 +80,7 @@ export class Setting {
   constructor(_container: unknown) { Setting.instances.push(this); }
   setName(name: string): this { this.name = name; return this; }
   setDesc(description: string): this { this.description = description; return this; }
+  setHeading(): this { return this; }
   addText(callback: (component: TextComponent) => unknown): this {
     this.text = new TextComponent();
     callback(this.text);

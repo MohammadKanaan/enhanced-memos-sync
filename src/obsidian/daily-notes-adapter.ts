@@ -19,7 +19,7 @@ interface DateValue {
 }
 
 interface DailyNotesVault {
-  getAbstractFileByPath(path: string): unknown | null;
+  getAbstractFileByPath(path: string): unknown;
   read(file: DailyNoteFile): Promise<string>;
   modify(file: DailyNoteFile, content: string): Promise<void>;
 }

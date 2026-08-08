@@ -8,7 +8,7 @@ interface VaultFile {
 }
 
 interface VaultHost {
-  getAbstractFileByPath(path: string): unknown | null;
+  getAbstractFileByPath(path: string): unknown;
   createFolder(path: string): Promise<unknown>;
   create(path: string, content: string): Promise<unknown>;
   createBinary(path: string, data: ArrayBuffer): Promise<unknown>;

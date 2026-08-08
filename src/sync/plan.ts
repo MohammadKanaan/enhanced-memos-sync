@@ -150,7 +150,7 @@ function cloneMemo<T extends MemoThread["parent"]>(memo: T): T {
     resources: freeze(memo.resources.map(cloneResource)),
     source: cloneSource(memo.source),
   };
-  return freeze(clone) as T;
+  return freeze(clone);
 }
 
 function cloneSource(source: MemoThread["parent"]["source"]): MemoThread["parent"]["source"] {
@@ -168,7 +168,7 @@ function cloneResources(resources: MemoThread["parent"]["source"]["resources"]):
 
 function cloneResource<T>(resource: T): T {
   return typeof resource === "object" && resource !== null && !Array.isArray(resource)
-    ? freeze({ ...resource }) as T
+    ? freeze({ ...resource })
     : resource;
 }
 
