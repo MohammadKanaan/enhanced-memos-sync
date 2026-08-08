@@ -1,51 +1,44 @@
 # Enhanced Memos Sync
 
-An Obsidian desktop plugin that synchronizes one Memos account into individual Markdown notes and embeds them in Daily Notes.
+This plugin brings Memos into Obsidian: each memo becomes its own note, and the day's memos are linked inside your Daily Note.
 
-## Requirements
+## Features
 
-- Obsidian 1.6.6 or later on desktop.
-- A Memos server URL and API token.
-- Daily Notes or Periodic Notes when daily-note reconciliation is required.
+- **Every memo becomes a note.** Each memo is saved as its own Markdown file in the folder you choose.
+- **Memos land in your Daily Notes.** The day's memos appear under a header you configure, so your journal and your memos live in the same place.
+- **Sync at your pace.** Smart Sync handles everyday use, Incremental Sync pulls in just the new stuff, and Force Sync reapplies edits and deletions from the server.
+- **Conversations stay together.** Replies are kept, and you can fold comments into their parent memo's note.
+- **Images come along.** Attachments are downloaded into a folder you pick and linked from your notes — or skipped entirely if you prefer.
+- **Safe to run on autopilot.** Incremental syncs only ever add notes — they never rewrite or delete files you already have.
+- **Runs itself if you want.** Sync on startup (with a delay and a "skip if synced today" option) or on a regular schedule.
+- **Keep the vault tidy.** A sync-days limit controls how far back memos go; `0` means no limit.
+- **Tokens stay safe.** On Obsidian 1.11.4+, your API token lives in Obsidian's Secret Storage; elsewhere it's masked in a password field.
 
-## Configuration
+## Getting started
 
-Configure the account name, Memos server URL, API token, note folders, daily-note header, sync window, threading, attachments, and optional startup or periodic sync in the plugin settings.
+You'll need Obsidian 1.6.6 or later on desktop, a Memos server URL with an API token, and — if you want memos in your daily notes — the Daily Notes or Periodic Notes plugin.
 
-This is a single-account plugin; it has no profile arrays or per-profile sync state. On Obsidian 1.11.4 and newer, a configured token is migrated to Obsidian Secret Storage. On older supported releases, the token remains in the plugin's persisted data and is shown in a password input for compatibility.
+To install, build the plugin (see [Development](#development)), copy `main.js`, `manifest.json`, and `styles.css` into `.obsidian/plugins/enhanced-memos-sync/` inside your vault, then enable **Enhanced Memos Sync** under Community Plugins.
 
-## Commands
+## Using the plugin
 
-- Smart Sync Memos
-- Incremental Sync (New Only)
-- Force Sync All Memos
+Once configured, run a sync from the ribbon button or one of three commands:
 
-## Privacy and network
+| Command                         | What it does                                                                                      |
+| ------------------------------- | ------------------------------------------------------------------------------------------------- |
+| **Smart Sync Memos**            | Full sync on first run, then incremental. Used by the ribbon button and scheduled syncs.          |
+| **Incremental Sync (New Only)** | Fetches only memos newer than the last sync. Adds new notes; never touches existing ones.         |
+| **Force Sync All Memos**        | Re-fetches the whole sync window, rewrites changed notes, and applies remote edits and deletions. |
 
-The plugin contacts only the Memos server URL you configure. It sends no telemetry and does not send vault data to the plugin author.
+In settings you can set the account name, server URL, API token, folders for memo notes and attachments, daily-note header, sync window, threading, and startup or periodic sync. On Obsidian 1.11.4 and newer, a configured token moves to Secret Storage; on older releases it stays in the plugin's data, shown in a password input for compatibility.
 
-## Conformance tests
+## Privacy
 
-| SPEC acceptance section | Acceptance suite |
-| --- | --- |
-| 10.1 Settings and lifecycle | [`tests/acceptance/settings-lifecycle.test.ts`](tests/acceptance/settings-lifecycle.test.ts) |
-| 10.2 Commands and modes | [`tests/acceptance/commands-modes.test.ts`](tests/acceptance/commands-modes.test.ts) |
-| 10.3 API and normalization | [`tests/acceptance/api-normalization.test.ts`](tests/acceptance/api-normalization.test.ts) |
-| 10.4 Memo files and frontmatter | [`tests/acceptance/memo-files.test.ts`](tests/acceptance/memo-files.test.ts) |
-| 10.5 Hashtags and todos | [`tests/acceptance/hashtags-todos.test.ts`](tests/acceptance/hashtags-todos.test.ts) |
-| 10.6 Threads | [`tests/acceptance/threads.test.ts`](tests/acceptance/threads.test.ts) |
-| 10.7 Resources and attachments | [`tests/acceptance/resources.test.ts`](tests/acceptance/resources.test.ts) |
-| 10.8 Daily notes | [`tests/acceptance/daily-notes.test.ts`](tests/acceptance/daily-notes.test.ts) |
-| 10.9 Reconciliation safety | [`tests/acceptance/reconciliation.test.ts`](tests/acceptance/reconciliation.test.ts) |
-| Source-defect regressions | [`tests/acceptance/idempotency.test.ts`](tests/acceptance/idempotency.test.ts) |
+The plugin only ever talks to the Memos server you configure. No telemetry, and no vault data sent anywhere else.
 
-## Build
+## Development
 
 ```sh
 bun install
 bun run check
 ```
-
-## Install into a test vault
-
-Build the plugin, then copy `main.js`, `manifest.json`, and `styles.css` into `.obsidian/plugins/enhanced-memos-sync/` in a disposable test vault and enable it from Obsidian's Community Plugins settings.
