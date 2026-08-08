@@ -1,6 +1,6 @@
 {
   "name": "enhanced-memos-sync",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Sync one Memos account into individual Obsidian Markdown notes.",
   "main": "main.js",
   "scripts": {
