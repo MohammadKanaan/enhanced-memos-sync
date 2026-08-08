@@ -16,6 +16,7 @@ export interface SettingsTabHost {
   settings: PluginSettings;
   updateSetting<K extends keyof PluginSettings>(key: K, value: PluginSettings[K]): Promise<void>;
   updateToken(value: string): Promise<void>;
+  getToken(): Promise<string | undefined>;
 }
 
 /** Standard single-account settings UI. Every accepted edit is durable before it is shown as saved. */
@@ -103,7 +104,18 @@ export class EnhancedMemosSyncSettingsTab extends PluginSettingTab {
     const error = setting.descEl.createDiv({ cls: "enhanced-memos-sync-validation-error" });
     setting.addText((component: TextComponent) => {
       component.inputEl.type = "password";
+      component.setValue(this.host.settings.apiToken ?? "");
+      let changed = false;
+      void this.host.getToken().then(
+        (token) => {
+          if (!changed) component.setValue(token ?? "");
+        },
+        () => {
+          if (!changed) error.textContent = "Unable to load the stored API token.";
+        },
+      );
       component.onChange(async (value) => {
+        changed = true;
         try {
           await this.host.updateToken(value);
           error.textContent = "";

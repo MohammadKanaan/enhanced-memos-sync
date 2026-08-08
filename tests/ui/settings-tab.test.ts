@@ -30,13 +30,14 @@ function host(): SettingsTabHost & { saves: Array<[string, unknown]>; tokens: st
       saves.push([key, value]);
     },
     updateToken: async (value) => { tokens.push(value); },
+    getToken: async () => "stored-token",
   };
 }
 
 describe("settings tab", () => {
   beforeEach(() => { MockSettings.instances.splice(0); });
 
-  it("renders one direct account surface with all controls and a password token input", () => {
+  it("renders one direct account surface with all controls and restores the stored token into a password input", async () => {
     const plugin = host();
     const tab = new EnhancedMemosSyncSettingsTab(plugin);
     tab.display();
@@ -48,6 +49,8 @@ describe("settings tab", () => {
       "Skip startup sync if synced today", "Periodic sync interval",
     ]);
     expect(setting("API token").text?.inputEl.type).toBe("password");
+    await Promise.resolve();
+    expect(setting("API token").text?.value).toBe("stored-token");
   });
 
   it("persists valid values immediately and keeps the prior regex with a persistent inline error", async () => {

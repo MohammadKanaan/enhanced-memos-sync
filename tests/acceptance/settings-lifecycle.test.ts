@@ -43,6 +43,7 @@ describe("SPEC 10.1 settings and lifecycle", () => {
       settings: { ...DEFAULT_SETTINGS, apiUrl: "https://memos.example" },
       updateSetting: async () => {},
       updateToken: async () => {},
+      getToken: async () => undefined,
     });
     tab.display();
     const names = (Setting as unknown as { instances: Array<{ name: string }> }).instances.map((setting) => setting.name);

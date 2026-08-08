@@ -137,6 +137,10 @@ export default class EnhancedMemosSyncPlugin extends Plugin {
     await this.credentials.set(this.settings, value);
   }
 
+  async getToken(): Promise<string | undefined> {
+    return this.credentials.get(this.settings);
+  }
+
   private async persistCurrentSettings(): Promise<void> {
     await this.store.saveSettings(this.settings);
   }
