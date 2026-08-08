@@ -36,5 +36,11 @@ describe("comment ordering", () => {
       "tied",
       "late",
     ]);
+    expect(orderComments(comments, " \t ").map((comment) => comment.id)).toEqual([
+      "unmatched",
+      "early",
+      "tied",
+      "late",
+    ]);
   });
 });

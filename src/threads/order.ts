@@ -2,7 +2,7 @@ import type { NormalizedMemo } from "../core/types";
 
 export function orderComments(comments: NormalizedMemo[], pattern: string): NormalizedMemo[] {
   let regex: RegExp | undefined;
-  if (pattern) {
+  if (pattern.trim()) {
     try {
       regex = new RegExp(pattern);
     } catch {

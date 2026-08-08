@@ -31,6 +31,20 @@ describe("MemosClient", () => {
     ]);
   });
 
+  it("preserves a configured server subpath when constructing list requests", async () => {
+    const request = new FakeRequestPort(() => ({
+      status: 200,
+      text: '{"memos":[]}',
+      json: { memos: [] },
+    }));
+
+    await new MemosClient(request, "https://memos.example/self-hosted///", "secret").list(0);
+
+    expect(request.calls[0]?.url).toBe(
+      "https://memos.example/self-hosted/api/v1/memos?pageSize=200",
+    );
+  });
+
   it("adds the created timestamp filter only when a threshold is present", async () => {
     const request = new FakeRequestPort(() => ({
       status: 200,

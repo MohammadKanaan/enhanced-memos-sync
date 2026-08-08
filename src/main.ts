@@ -13,6 +13,7 @@ import { DEFAULT_SETTINGS } from "./settings/defaults";
 import type { PluginSettings, SyncState } from "./settings/types";
 import { PersistedStore } from "./state/persisted-store";
 import { SyncCoordinator } from "./sync/coordinator";
+import { PersistedSyncFinalizer } from "./sync/finalizer";
 import { EnhancedMemosSyncSettingsTab } from "./ui/settings-tab";
 
 export const MEMOS_COMMANDS: ReadonlyArray<{ id: string; name: string; mode: RequestedSyncMode }> = [
@@ -35,6 +36,9 @@ export default class EnhancedMemosSyncPlugin extends Plugin {
       loadData: () => this.loadData(),
       saveData: (data) => this.saveData(data),
     });
+    const vault = new ObsidianVaultAdapter({ vault: this.app.vault, fileManager: this.app.fileManager as never });
+    const finalizer = new PersistedSyncFinalizer(this.store, vault);
+    await finalizer.recoverPendingFinalization();
     const persisted = await this.store.load();
     this.settings = persisted.settings;
     this.state = persisted.state;
@@ -46,7 +50,6 @@ export default class EnhancedMemosSyncPlugin extends Plugin {
     await this.credentials.migrate(this.settings);
 
     const request = new ObsidianRequestAdapter(requestUrl);
-    const vault = new ObsidianVaultAdapter({ vault: this.app.vault, fileManager: this.app.fileManager as never });
     const dailyNotes = new ObsidianDailyNotesAdapter(this.app.vault);
     this.coordinator = new SyncCoordinator({
       settings: () => ({ ...this.settings }),
@@ -62,6 +65,19 @@ export default class EnhancedMemosSyncPlugin extends Plugin {
         const next = cloneState(state);
         await this.store.updateState(() => next);
         this.state = next;
+      },
+      recoverPendingFinalization: async () => {
+        await finalizer.recoverPendingFinalization();
+        this.state = cloneState((await this.store.load()).state);
+      },
+      finalizeSuccessfulSync: async (input) => {
+        try {
+          await finalizer.finalizeSuccessfulSync(input);
+          this.state = cloneState(input.nextState);
+        } catch (error) {
+          this.state = cloneState(input.priorState);
+          throw error;
+        }
       },
       notice: (message) => this.notices.show(message),
       now: () => new Date(),

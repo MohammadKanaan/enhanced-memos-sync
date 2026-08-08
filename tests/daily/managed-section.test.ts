@@ -59,4 +59,24 @@ describe("daily-note managed sections", () => {
     expect(result.content).toContain("```md\n## Memos\n```");
     expect(result.diagnostics).toHaveLength(1);
   });
+
+  it("does not let a fenced heading end the managed section", () => {
+    const result = updateManagedSection(
+      [
+        "## Memos",
+        "```md",
+        "# This is documentation, not a section boundary",
+        "```",
+        "![[2026-01-01-10]]",
+        "# Actual next section",
+      ].join("\n"),
+      "## Memos",
+      ["2026-01-01-20"],
+      "full",
+    );
+
+    expect(result.content).toContain(
+      "```md\n# This is documentation, not a section boundary\n```\n![[2026-01-01-20]]\n# Actual next section",
+    );
+  });
 });

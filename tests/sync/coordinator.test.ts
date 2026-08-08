@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { SyncCoordinator } from "../../src/sync/coordinator";
 import { DEFAULT_SETTINGS } from "../../src/settings/defaults";
 import type { PluginSettings, SyncState } from "../../src/settings/types";
+import type { SuccessfulSyncFinalization } from "../../src/sync/finalization";
+import { SyncFinalizationError } from "../../src/sync/finalization";
 import { FakeDailyNotes } from "../support/fake-daily-notes";
 import { FakePersistence } from "../support/fake-persistence";
 import { FakeRequestPort } from "../support/fake-request-port";
@@ -19,12 +21,15 @@ function setup(options: {
   token?: string;
   attachmentStatus?: number;
   attachmentStatuses?: number[];
+  finalize?: (input: SuccessfulSyncFinalization, vault: InMemoryVault, persistence: FakePersistence) => Promise<void>;
+  recover?: () => Promise<void>;
 } = {}) {
   const notices: string[] = [];
   const vault = new InMemoryVault();
   const dailyNotes = new FakeDailyNotes();
   const persistence = new FakePersistence(options.state ?? { renderSnapshots: {} });
   const fetchCalls: Array<{ threshold: number; mode: "incremental" | "full" }> = [];
+  const finalize = options.finalize ?? defaultFinalizer;
   const coordinator = new SyncCoordinator({
     settings: () => ({ ...DEFAULT_SETTINGS, apiUrl: "https://memos.example", ...options.settings }),
     state: persistence.state,
@@ -41,6 +46,8 @@ function setup(options: {
       arrayBuffer: (options.attachmentStatuses?.[index] ?? options.attachmentStatus ?? 200) >= 300 ? undefined : new Uint8Array([1]).buffer,
     })),
     commit: persistence.commit,
+    recoverPendingFinalization: options.recover ?? (async () => {}),
+    finalizeSuccessfulSync: (input) => finalize(input, vault, persistence),
     notice: (message) => notices.push(message),
     now,
   });
@@ -57,6 +64,21 @@ describe("sync coordinator", () => {
     expect(disabled.fetchCalls).toEqual([]);
     expect(missingToken.fetchCalls).toEqual([]);
     expect(missingToken.notices.at(-1)).toContain("configuration is incomplete");
+  });
+
+  it("stops before fetch until pending finalization recovery succeeds", async () => {
+    let recovered = false;
+    const sync = setup({ recover: async () => {
+      if (!recovered) throw new Error("recovery unavailable");
+    } });
+
+    await expect(sync.coordinator.run("force")).resolves.toMatchObject({ complete: false });
+    expect(sync.fetchCalls).toEqual([]);
+    expect(sync.notices.at(-1)).toBe("Memos sync recovery is incomplete.");
+
+    recovered = true;
+    await expect(sync.coordinator.run("force")).resolves.toMatchObject({ complete: true });
+    expect(sync.fetchCalls).toHaveLength(1);
   });
 
   it("rejects unsafe persisted folders at the settings stage before network work", async () => {
@@ -99,6 +121,8 @@ describe("sync coordinator", () => {
       dailyNotes: new FakeDailyNotes(),
       request: new FakeRequestPort(() => ({ status: 200, text: "", arrayBuffer: new Uint8Array().buffer })),
       commit: async () => {},
+      recoverPendingFinalization: async () => {},
+      finalizeSuccessfulSync: async () => {},
       notice: (message) => notices.push(message),
       now,
     });
@@ -154,6 +178,44 @@ describe("sync coordinator", () => {
     expect(rewritten.match(/!\[\[file-report\.pdf\]\]/g)).toHaveLength(1);
   });
 
+  it("preserves a reply task while a standalone reply becomes a threaded segment", async () => {
+    const settings: Partial<PluginSettings> = { mergeCommentsIntoParent: false };
+    const records = [
+      memo(1_768_867_200),
+      memo(1_768_867_201, { content: "Reply\n- [ ] reply task", parent: "memos/1768867200" }),
+    ];
+    const { coordinator, vault } = setup({ settings, records });
+
+    await expect(coordinator.run("force")).resolves.toMatchObject({ complete: true });
+    vault.text.set(
+      "Memos/2026-01-20-1768867201.md",
+      (vault.text.get("Memos/2026-01-20-1768867201.md") ?? "").replace("- [ ] reply task", "- [x] reply task"),
+    );
+    settings.mergeCommentsIntoParent = true;
+
+    await expect(coordinator.run("force")).resolves.toMatchObject({ complete: true });
+    expect(vault.text.get("Memos/2026-01-20-1768867200.md")).toContain("- [x] reply task");
+  });
+
+  it("preserves a reply task while a threaded segment becomes standalone", async () => {
+    const settings: Partial<PluginSettings> = { mergeCommentsIntoParent: true };
+    const records = [
+      memo(1_768_867_200),
+      memo(1_768_867_201, { content: "Reply\n- [ ] reply task", parent: "memos/1768867200" }),
+    ];
+    const { coordinator, vault } = setup({ settings, records });
+
+    await expect(coordinator.run("force")).resolves.toMatchObject({ complete: true });
+    vault.text.set(
+      "Memos/2026-01-20-1768867200.md",
+      (vault.text.get("Memos/2026-01-20-1768867200.md") ?? "").replace("- [ ] reply task", "- [x] reply task"),
+    );
+    settings.mergeCommentsIntoParent = false;
+
+    await expect(coordinator.run("force")).resolves.toMatchObject({ complete: true });
+    expect(vault.text.get("Memos/2026-01-20-1768867201.md")).toContain("- [x] reply task");
+  });
+
   it("keeps successful writes but withholds deletion and cursor commit after an attachment failure", async () => {
     const { coordinator, vault, persistence } = setup({
       state: { cursor: 10, renderSnapshots: {} },
@@ -194,7 +256,23 @@ describe("sync coordinator", () => {
     expect(forced.vault.trashed).toEqual(["Memos/2026-01-19-10.md"]);
   });
 
-  it("returns incomplete and retains cursor when the terminal state commit fails after deletion", async () => {
+  it("delegates terminal deletion and cursor commit to the finalizer boundary", async () => {
+    const calls: SuccessfulSyncFinalization[] = [];
+    const { coordinator, vault, persistence } = setup({
+      state: { cursor: 99, renderSnapshots: {} },
+      finalize: async (input) => { calls.push(input); },
+    });
+    vault.text.set("Memos/2026-01-19-10.md", managedNote(10, "2026-01-19"));
+
+    await expect(coordinator.run("force")).resolves.toMatchObject({ complete: true, counts: { memoNotesTrashed: 1 } });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.deletions).toEqual([{ path: "Memos/2026-01-19-10.md", content: managedNote(10, "2026-01-19") }]);
+    expect(vault.trashed).toEqual([]);
+    expect(persistence.state().cursor).toBe(99);
+  });
+
+  it("does not delete or advance the cursor when the final state commit fails", async () => {
     const { coordinator, vault, persistence } = setup({ state: { cursor: 99, lastSuccessfulSyncDate: "2026-01-18", renderSnapshots: {} } });
     vault.text.set("Memos/2026-01-19-10.md", managedNote(10, "2026-01-19"));
     vault.text.set("Memos/2026-01-19-11.md", managedNote(11, "2026-01-19"));
@@ -203,12 +281,13 @@ describe("sync coordinator", () => {
     const result = await coordinator.run("force");
     expect(result).toMatchObject({ complete: false });
     expect(result.diagnostics).toContainEqual(expect.objectContaining({ severity: "error", stage: "state" }));
-    expect(vault.trashed).toEqual(["Memos/2026-01-19-10.md", "Memos/2026-01-19-11.md"]);
+    expect(vault.text.get("Memos/2026-01-19-10.md")).toBe(managedNote(10, "2026-01-19"));
+    expect(vault.text.get("Memos/2026-01-19-11.md")).toBe(managedNote(11, "2026-01-19"));
     expect(persistence.state()).toMatchObject({ cursor: 99, lastSuccessfulSyncDate: "2026-01-18" });
   });
 
   it("keeps ineligible candidates as warnings without blocking other force deletion", async () => {
-    const { coordinator, vault, persistence } = setup({ state: { cursor: 99, renderSnapshots: {} } });
+    const { coordinator, vault, persistence } = setup({ state: { cursor: 99, lastSuccessfulSyncDate: "2026-01-18", renderSnapshots: {} } });
     vault.text.set("Memos/2026-01-19-10.md", managedNote(10, "2026-01-19"));
     vault.text.set("Memos/2026-01-19-11.md", "unmanaged note");
 
@@ -219,8 +298,8 @@ describe("sync coordinator", () => {
     expect(persistence.state().cursor).toBeUndefined();
   });
 
-  it("returns incomplete without committing the cursor when a later trash fails", async () => {
-    const { coordinator, vault, persistence } = setup({ state: { cursor: 99, renderSnapshots: {} } });
+  it("restores earlier trashed notes and retains the cursor when a later trash fails", async () => {
+    const { coordinator, vault, persistence } = setup({ state: { cursor: 99, lastSuccessfulSyncDate: "2026-01-18", renderSnapshots: {} } });
     vault.text.set("Memos/2026-01-19-10.md", managedNote(10, "2026-01-19"));
     vault.text.set("Memos/2026-01-19-11.md", managedNote(11, "2026-01-19"));
     vault.failTrashesFor.add("Memos/2026-01-19-11.md");
@@ -229,7 +308,9 @@ describe("sync coordinator", () => {
     expect(result).toMatchObject({ complete: false });
     expect(result.diagnostics).toContainEqual(expect.objectContaining({ severity: "error", stage: "deletion", path: "Memos/2026-01-19-11.md" }));
     expect(vault.trashed).toEqual(["Memos/2026-01-19-10.md"]);
-    expect(persistence.state().cursor).toBe(99);
+    expect(vault.text.get("Memos/2026-01-19-10.md")).toBe(managedNote(10, "2026-01-19"));
+    expect(vault.text.get("Memos/2026-01-19-11.md")).toBe(managedNote(11, "2026-01-19"));
+    expect(persistence.state()).toMatchObject({ cursor: 99, lastSuccessfulSyncDate: "2026-01-18" });
   });
 
   it("treats invalid memos, daily failures, and state save failures as partial without advancing the cursor", async () => {
@@ -331,4 +412,31 @@ describe("sync coordinator", () => {
 
 function managedNote(timestamp: number, date: string): string {
   return `---\nmemo_id: ${timestamp}\ntimestamp: ${timestamp}\ndate: ${date}\ntags: [memo, daily-record]\nsource: "Default (https://memos.example)"\n---\n`;
+}
+
+async function defaultFinalizer(
+  input: SuccessfulSyncFinalization,
+  vault: InMemoryVault,
+  persistence: FakePersistence,
+): Promise<void> {
+  const trashed: SuccessfulSyncFinalization["deletions"][number][] = [];
+  try {
+    for (const deletion of input.deletions) {
+      await vault.trash(deletion.path);
+      trashed.push(deletion);
+    }
+  } catch (error) {
+    for (const deletion of [...trashed].reverse()) {
+      await vault.writeText(deletion.path, deletion.content);
+    }
+    throw new SyncFinalizationError("deletion", "trash failed", error, trashed.length < input.deletions.length ? input.deletions[trashed.length]?.path : undefined);
+  }
+  try {
+    await persistence.commit(input.nextState);
+  } catch (error) {
+    for (const deletion of [...trashed].reverse()) {
+      await vault.writeText(deletion.path, deletion.content);
+    }
+    throw new SyncFinalizationError("state", "state save failed", error);
+  }
 }

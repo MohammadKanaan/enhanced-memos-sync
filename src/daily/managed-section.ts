@@ -88,7 +88,17 @@ function findExactHeadings(lines: string[], heading: string): number[] {
 }
 
 function sectionEnd(lines: string[], start: number, level: number): number {
+  let fence: { character: "`" | "~"; length: number } | undefined;
   for (let index = start + 1; index < lines.length; index += 1) {
+    if (fence) {
+      if (closingFence(lines[index]!, fence)) fence = undefined;
+      continue;
+    }
+    const opening = openingFence(lines[index]!);
+    if (opening) {
+      fence = opening;
+      continue;
+    }
     const match = lines[index]!.match(/^(#{1,6})\s/);
     if (match && match[1]!.length <= level) return index;
   }

@@ -48,6 +48,7 @@ describe("settings validation", () => {
 
   it("keeps the prior regex when a non-blank pattern is invalid", () => {
     expect(validateCommentOrderRegex("", "-- (\\d+) --")).toEqual({ value: "" });
+    expect(validateCommentOrderRegex(" \t ", "-- (\\d+) --")).toEqual({ value: "" });
     expect(validateCommentOrderRegex("-- (\\d+) --", "")).toEqual({
       value: "-- (\\d+) --",
     });

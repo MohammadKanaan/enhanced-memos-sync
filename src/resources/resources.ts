@@ -1,5 +1,6 @@
 import { normalizeFolderPath, sanitizeAttachmentFilenamePart } from "../core/paths";
 import type { RemoteResource, SyncDiagnostic } from "../core/types";
+import { appendServerPath } from "../core/url";
 
 export const GENERIC_EXTERNAL_RESOURCE_LABEL = "resource";
 
@@ -75,7 +76,7 @@ export function planResources(
       kind: "local",
       markdown: `![[${localFilename}]]`,
       path: `${attachmentFolder}/${localFilename}`,
-      url: new URL(endpoint, `${normalizedApiUrl}/`).toString(),
+      url: appendServerPath(normalizedApiUrl, endpoint),
       resourceId: identity,
     });
   }

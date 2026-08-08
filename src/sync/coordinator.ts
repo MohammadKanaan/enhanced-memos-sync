@@ -14,6 +14,7 @@ import { canTrashMemoNote } from "./deletion";
 import type { RequestPort, VaultPort } from "./ports";
 import { associateThreads, type MemoThread } from "../threads/associate";
 import { orderComments } from "../threads/order";
+import { SyncFinalizationError, type FinalizationDeletion, type SuccessfulSyncFinalization } from "./finalization";
 
 export interface CoordinatorPorts {
   /** Returns a fresh settings snapshot. The coordinator freezes its run input immediately. */
@@ -28,6 +29,10 @@ export interface CoordinatorPorts {
   request: RequestPort;
   /** Must serialize with settings saves and make the supplied state durable before resolving. */
   commit(state: SyncState): Promise<void>;
+  /** Resolves any interrupted terminal finalization before this run may fetch or mutate the vault. */
+  recoverPendingFinalization(): Promise<void>;
+  /** Owns the journaled final trash/state boundary; the coordinator never performs terminal deletion directly. */
+  finalizeSuccessfulSync(input: SuccessfulSyncFinalization): Promise<void>;
   notice(message: string): void;
   now(): Date;
 }
@@ -58,6 +63,13 @@ export class SyncCoordinator {
   private async runActive(requestedMode: RequestedSyncMode): Promise<SyncResult> {
     const diagnostics: SyncDiagnostic[] = [];
     const counts = emptyCounts();
+    try {
+      await this.ports.recoverPendingFinalization();
+    } catch {
+      diagnostics.push({ severity: "error", stage: "state", message: "Pending sync recovery failed." });
+      this.ports.notice("Memos sync recovery is incomplete.");
+      return { requestedMode, complete: false, diagnostics, counts };
+    }
     const settings = { ...this.ports.settings() };
     const state = cloneState(this.ports.state());
     let token: string | undefined;
@@ -177,9 +189,22 @@ export class SyncCoordinator {
       diagnostics.push({ severity: "error", stage: "memo-write", message: redact(token, error), path: settings.memoNoteFolder });
     }
 
+    const historicalSnapshots = memoFolderReady
+      ? await this.captureHistoricalSnapshots(state, token, diagnostics)
+      : new Map<string, string>();
+
     for (const output of plan.outputs) {
       if (!memoFolderReady) break;
-      const written = await this.writeMemoOutput(output, workingState, settings, apiUrl, token, plan.resourceIntents);
+      const written = await this.writeMemoOutput(
+        output,
+        workingState,
+        state,
+        historicalSnapshots,
+        settings,
+        apiUrl,
+        token,
+        plan.resourceIntents,
+      );
       diagnostics.push(...written.diagnostics);
       counts.memoNotesWritten += written.memoNotesWritten;
       if (written.state) workingState = written.state;
@@ -189,7 +214,7 @@ export class SyncCoordinator {
     diagnostics.push(...daily.diagnostics);
     counts.dailyNotesModified += daily.modified;
 
-    const deletionPaths = effectiveMode === "full" && !hasErrors(diagnostics)
+    const deletionCandidates = effectiveMode === "full" && !hasErrors(diagnostics)
       ? await this.preflightDeletions(plan, settings, apiUrl, cutoff, today, token, diagnostics)
       : [];
 
@@ -208,23 +233,26 @@ export class SyncCoordinator {
         : { cursor: maximumTimestamp }),
       lastSuccessfulSyncDate: today,
     };
-    for (const path of deletionPaths) {
-      try {
-        await this.ports.vault.trash(path);
-        counts.memoNotesTrashed += 1;
-      } catch (error) {
-        diagnostics.push({ severity: "error", stage: "deletion", path, message: redact(token, error) });
-      }
-    }
 
-    if (hasErrors(diagnostics)) {
-      return this.finish(requestedMode, effectiveMode, false, diagnostics, counts);
-    }
-
+    const priorState: SyncState = {
+      ...workingState,
+      ...(state.cursor === undefined ? {} : { cursor: state.cursor }),
+      ...(state.lastSuccessfulSyncDate === undefined ? {} : { lastSuccessfulSyncDate: state.lastSuccessfulSyncDate }),
+    };
     try {
-      await this.ports.commit(committedState);
+      await this.ports.finalizeSuccessfulSync({
+        priorState,
+        nextState: committedState,
+        deletions: deletionCandidates,
+      });
+      counts.memoNotesTrashed += deletionCandidates.length;
     } catch (error) {
-      diagnostics.push({ severity: "error", stage: "state", message: redact(token, error) });
+      diagnostics.push({
+        severity: "error",
+        stage: error instanceof SyncFinalizationError ? error.stage : "state",
+        ...(error instanceof SyncFinalizationError && error.path ? { path: error.path } : {}),
+        message: redact(token, error),
+      });
       return this.finish(requestedMode, effectiveMode, false, diagnostics, counts);
     }
 
@@ -261,14 +289,18 @@ export class SyncCoordinator {
     today: string,
     token: string,
     diagnostics: SyncDiagnostic[],
-  ): Promise<string[]> {
-    const paths: string[] = [];
+  ): Promise<FinalizationDeletion[]> {
+    const candidates: FinalizationDeletion[] = [];
     for (const path of plan.staleCandidatePaths) {
       try {
         const content = await this.ports.vault.readText(path);
+        if (content === undefined) {
+          diagnostics.push({ severity: "warning", stage: "deletion", path, message: "Memo note was not eligible for deletion: file no longer exists." });
+          continue;
+        }
         const checked = canTrashMemoNote({
           path,
-          content: content ?? "",
+          content,
           memoFolder: settings.memoNoteFolder,
           source: `${settings.accountName} (${apiUrl})`,
           authoritativePaths: plan.authoritativePaths,
@@ -279,17 +311,19 @@ export class SyncCoordinator {
           diagnostics.push({ severity: "warning", stage: "deletion", path, message: `Memo note was not eligible for deletion: ${checked.reason ?? "not eligible"}.` });
           continue;
         }
-        paths.push(path);
+        candidates.push({ path, content });
       } catch (error) {
         diagnostics.push({ severity: "error", stage: "deletion", path, message: redact(token, error) });
       }
     }
-    return paths;
+    return candidates;
   }
 
   private async writeMemoOutput(
     output: PlannedMemoOutput,
     state: SyncState,
+    historyState: SyncState,
+    historicalSnapshots: ReadonlyMap<string, string>,
     settings: PluginSettings,
     apiUrl: string,
     token: string,
@@ -316,13 +350,21 @@ export class SyncCoordinator {
         id: memo.id,
         markdown: renderSegment(memo.content, resourceMarkdown.get(memo.id)),
       }));
-      const snapshot = state.renderSnapshots[output.thread.parent.id];
+      const snapshot = historyState.renderSnapshots[output.thread.parent.id];
       recovered = recoverThreadTaskStates({
         existingBody: withoutFrontmatter(existingContent ?? ""),
         ...(snapshot?.notePath === output.path ? { snapshot } : {}),
         freshSegments,
       });
       diagnostics.push(...recovered.diagnostics.map((diagnostic) => ({ ...diagnostic, path: output.path })));
+      const transitioned = this.recoverTransitionTaskStates(
+        historyState,
+        historicalSnapshots,
+        output,
+        recovered.segments,
+      );
+      diagnostics.push(...transitioned.diagnostics);
+      recovered = { ...recovered, segments: transitioned.segments };
       const renderedThread = withRecoveredSegments(output.thread, recovered.segments.map((segment) => segment.markdown));
       content = renderMemoNote(renderedThread, {
         accountName: settings.accountName,
@@ -391,6 +433,54 @@ export class SyncCoordinator {
       }
     }
     return { diagnostics, modified };
+  }
+
+  private async captureHistoricalSnapshots(
+    state: SyncState,
+    token: string,
+    diagnostics: SyncDiagnostic[],
+  ): Promise<Map<string, string>> {
+    const historical = new Map<string, string>();
+    for (const path of new Set(Object.values(state.renderSnapshots).map((snapshot) => snapshot.notePath))) {
+      try {
+        const content = await this.ports.vault.readText(path);
+        if (content !== undefined) historical.set(path, content);
+      } catch (error) {
+        diagnostics.push({ severity: "error", stage: "memo-write", path, message: redact(token, error) });
+      }
+    }
+    return historical;
+  }
+
+  /** Recover segments that were previously rendered in a different note when
+   * the merge-comments setting transitions between standalone and threaded. */
+  private recoverTransitionTaskStates(
+    state: SyncState,
+    historicalSnapshots: ReadonlyMap<string, string>,
+    output: PlannedMemoOutput,
+    segments: Array<{ id: string; markdown: string }>,
+  ): { segments: Array<{ id: string; markdown: string }>; diagnostics: SyncDiagnostic[] } {
+    const diagnostics: SyncDiagnostic[] = [];
+    let recoveredSegments = segments;
+
+    for (const snapshot of Object.values(state.renderSnapshots)) {
+      if (snapshot.notePath === output.path) continue;
+      const affected = recoveredSegments.filter((segment) => snapshot.segments.some(({ id }) => id === segment.id));
+      if (affected.length === 0) continue;
+
+      const historicalContent = historicalSnapshots.get(snapshot.notePath);
+      if (historicalContent === undefined) continue;
+      const recovered = recoverThreadTaskStates({
+        existingBody: withoutFrontmatter(historicalContent),
+        snapshot,
+        freshSegments: affected,
+      });
+      diagnostics.push(...recovered.diagnostics.map((diagnostic) => ({ ...diagnostic, path: snapshot.notePath })));
+      const byId = new Map(recovered.segments.map((segment) => [segment.id, segment]));
+      recoveredSegments = recoveredSegments.map((segment) => byId.get(segment.id) ?? segment);
+    }
+
+    return { segments: recoveredSegments, diagnostics };
   }
 
   private finish(

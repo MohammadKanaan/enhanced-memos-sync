@@ -63,6 +63,17 @@ describe("resource planning", () => {
     ]);
   });
 
+  it("preserves a configured server subpath for local resource endpoints", () => {
+    const result = planResources(
+      [{ id: "file", filename: "file.pdf" }],
+      { apiUrl: "https://memos.example/self-hosted/", attachmentFolder: "attachments", skipImages: false },
+    );
+
+    expect(result.items).toContainEqual(expect.objectContaining({
+      url: "https://memos.example/self-hosted/o/r/file",
+    }));
+  });
+
   it("warns and creates no local work for missing identity or filename", () => {
     const result = planResources(
       [{ filename: "only-file" }, { id: "only-id", name: "" }],

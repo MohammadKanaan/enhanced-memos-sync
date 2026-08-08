@@ -1,5 +1,6 @@
 import { createRedactedExternalError } from "../core/diagnostics";
 import type { RemoteMemo } from "../core/types";
+import { appendServerPath } from "../core/url";
 import type { RequestPort } from "../sync/ports";
 import type { ListMemosResponse } from "./contracts";
 
@@ -82,7 +83,7 @@ export class MemosClient {
   }
 
   private buildListUrl(threshold: number, pageToken: string | undefined): string {
-    const url = new URL("/api/v1/memos", `${this.baseUrl}/`);
+    const url = new URL(appendServerPath(this.baseUrl, "api/v1/memos"));
     url.searchParams.set("pageSize", String(PAGE_SIZE));
     if (threshold > 0) {
       url.searchParams.set("filter", `created_ts > ${threshold}`);

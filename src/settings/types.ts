@@ -37,4 +37,5 @@ export interface PersistedData {
   schemaVersion: 1;
   settings: PluginSettings;
   state: SyncState;
+  finalizationJournal?: import("../sync/finalization").SuccessfulSyncFinalization;
 }

@@ -1,4 +1,6 @@
 import { SyncCoordinator } from "../../src/sync/coordinator";
+import type { SuccessfulSyncFinalization } from "../../src/sync/finalization";
+import { SyncFinalizationError } from "../../src/sync/finalization";
 import { DEFAULT_SETTINGS } from "../../src/settings/defaults";
 import type { PluginSettings, SyncState } from "../../src/settings/types";
 import { FakeDailyNotes } from "./fake-daily-notes";
@@ -59,8 +61,37 @@ export function createAcceptanceSync(options: {
     dailyNotes,
     request,
     commit: persistence.commit,
+    recoverPendingFinalization: async () => {},
+    finalizeSuccessfulSync: (input) => finalize(input, vault, persistence),
     notice: (message) => notices.push(message),
     now: ACCEPTANCE_NOW,
   });
   return { coordinator, vault, dailyNotes, persistence, notices, fetchCalls, request };
+}
+
+async function finalize(
+  input: SuccessfulSyncFinalization,
+  vault: InMemoryVault,
+  persistence: FakePersistence,
+): Promise<void> {
+  const trashed: SuccessfulSyncFinalization["deletions"][number][] = [];
+  try {
+    for (const deletion of input.deletions) {
+      await vault.trash(deletion.path);
+      trashed.push(deletion);
+    }
+  } catch (error) {
+    for (const deletion of [...trashed].reverse()) {
+      await vault.writeText(deletion.path, deletion.content);
+    }
+    throw new SyncFinalizationError("deletion", "trash failed", error);
+  }
+  try {
+    await persistence.commit(input.nextState);
+  } catch (error) {
+    for (const deletion of [...trashed].reverse()) {
+      await vault.writeText(deletion.path, deletion.content);
+    }
+    throw new SyncFinalizationError("state", "state save failed", error);
+  }
 }

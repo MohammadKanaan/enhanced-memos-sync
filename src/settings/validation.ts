@@ -63,7 +63,7 @@ export function validateCommentOrderRegex(
   input: string,
   previous: string,
 ): ValidationResult<string> {
-  if (input === "") {
+  if (input.trim() === "") {
     return { value: "" };
   }
 

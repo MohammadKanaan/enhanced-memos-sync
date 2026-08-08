@@ -71,4 +71,25 @@ describe("PersistedStore", () => {
       },
     });
   });
+
+  it("retains a prepared finalization journal through a queued settings save", async () => {
+    const adapter = new FakeDataAdapter({ state: { cursor: 99, renderSnapshots: {} } });
+    const store = new PersistedStore(adapter);
+    await store.load();
+    const journal = {
+      priorState: { cursor: 99, renderSnapshots: {} },
+      nextState: { cursor: 100, renderSnapshots: {} },
+      deletions: [{ path: "Memos/2026-01-19-10.md", content: "original" }],
+    };
+
+    await Promise.all([
+      store.prepareFinalization(journal),
+      store.saveSettings({ ...DEFAULT_SETTINGS, accountName: "Updated while prepared" }),
+    ]);
+
+    await expect(store.load()).resolves.toMatchObject({
+      settings: { accountName: "Updated while prepared" },
+      finalizationJournal: journal,
+    });
+  });
 });
