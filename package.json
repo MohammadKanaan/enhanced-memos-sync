@@ -1,0 +1,28 @@
+{
+  "name": "enhanced-memos-sync",
+  "version": "0.1.0",
+  "description": "Sync one Memos account into individual Obsidian Markdown notes.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "bun esbuild.config.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "bundle": "bun esbuild.config.mjs production",
+    "build": "bun run typecheck && bun run bundle",
+    "check": "bun run typecheck && bun run test && bun run bundle"
+  },
+  "dependencies": {
+    "diff": "^8.0.2",
+    "obsidian-daily-notes-interface": "0.9.4",
+    "yaml": "^2.8.0"
+  },
+  "devDependencies": {
+    "@types/diff": "^7.0.2",
+    "@types/node": "^22.15.17",
+    "esbuild": "0.25.5",
+    "obsidian": "latest",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}

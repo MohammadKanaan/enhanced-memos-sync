@@ -1,0 +1,8 @@
+{
+  "id": "enhanced-memos-sync",
+  "name": "Enhanced Memos Sync",
+  "version": "0.1.0",
+  "minAppVersion": "1.6.6",
+  "author": "Mohammad Kanaan",
+  "isDesktopOnly": true
+}
