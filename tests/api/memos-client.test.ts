@@ -68,11 +68,12 @@ describe("MemosClient", () => {
           json: { memos: [memo], nextPageToken: "cursor+one" },
         };
       }
-      return {
+      if (index === 1) return {
         status: 200,
         text: "",
         json: { memos: [{ ...memo, name: "memos/2" }] },
       };
+      return { status: 200, text: "", json: { memos: [] } };
     });
 
     await expect(new MemosClient(request, "https://memos.example", "secret").list(9)).resolves.toEqual([
@@ -94,7 +95,7 @@ describe("MemosClient", () => {
       return { status: 200, text: "", json: { memos: [secondComment] } };
     });
 
-    await expect(new MemosClient(request, "https://memos.example/self-hosted", "secret").list(0, true)).resolves.toEqual([
+    await expect(new MemosClient(request, "https://memos.example/self-hosted", "secret").list(0)).resolves.toEqual([
       parent,
       { ...firstComment, parent: "memos/parent-id" },
       secondComment,
@@ -106,15 +107,16 @@ describe("MemosClient", () => {
     ]);
   });
 
-  it("does not request comments while threaded-note merging is disabled", async () => {
+  it("fetches comments even though the renderer may keep them as standalone notes", async () => {
     const request = new FakeRequestPort(() => ({
       status: 200,
       text: "",
       json: { memos: [memo] },
     }));
 
-    await new MemosClient(request, "https://memos.example", "secret").list(0, false);
-    expect(request.calls).toHaveLength(1);
+    await new MemosClient(request, "https://memos.example", "secret").list(0);
+    expect(request.calls).toHaveLength(2);
+    expect(request.calls[1]?.url).toBe("https://memos.example/api/v1/memos/1/comments?pageSize=200");
   });
 
   it("rejects repeated pagination tokens without accepting a truncated result", async () => {

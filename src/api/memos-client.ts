@@ -36,7 +36,7 @@ export class MemosClient {
     this.baseUrl = apiUrl.replace(/\/+$/, "");
   }
 
-  async list(threshold: number, includeComments = false): Promise<RemoteMemo[]> {
+  async list(threshold: number): Promise<RemoteMemo[]> {
     const memos: RemoteMemo[] = [];
     const seenTokens = new Set<string>();
     let pageToken: string | undefined;
@@ -69,7 +69,7 @@ export class MemosClient {
       memos.push(...payload.memos);
 
       if (payload.nextPageToken === undefined || payload.nextPageToken === "") {
-        return includeComments ? [...memos, ...await this.listComments(memos)] : memos;
+        return [...memos, ...await this.listComments(memos)];
       }
       if (seenTokens.has(payload.nextPageToken)) {
         throw new MemosApiError("Memos API returned a repeated page token.", undefined, this.token);
@@ -95,7 +95,8 @@ export class MemosClient {
   }
 
   /** Memos exposes replies through a per-parent endpoint instead of returning
-   * them from ListMemos. Fetch them only for threaded-note reconciliation. */
+   * them from ListMemos. The rendering setting decides whether they remain
+   * standalone or are consolidated into their parent. */
   private async listComments(memos: RemoteMemo[]): Promise<RemoteMemo[]> {
     const comments: RemoteMemo[] = [];
     for (const parent of memos) {

@@ -55,8 +55,8 @@ export default class EnhancedMemosSyncPlugin extends Plugin {
       settings: () => ({ ...this.settings }),
       state: () => cloneState(this.state),
       token: () => this.credentials.get(this.settings),
-      fetch: async (threshold, _mode, apiUrl, token, includeComments) => {
-        return new MemosClient(request, apiUrl, token).list(threshold, includeComments);
+      fetch: async (threshold, _mode, apiUrl, token) => {
+        return new MemosClient(request, apiUrl, token).list(threshold);
       },
       vault,
       dailyNotes,
