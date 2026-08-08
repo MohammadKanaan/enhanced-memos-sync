@@ -5,6 +5,8 @@ import { resolveDailyNotePaths, type DailyNotesPort } from "../../src/daily/reso
 class FakeDailyNotes implements DailyNotesPort {
   readonly calls: Array<{ date: string; createIfMissing: boolean }> = [];
 
+  isAvailable(): boolean { return true; }
+
   async listExisting(): Promise<Array<{ date: string; path: string }>> {
     return [];
   }

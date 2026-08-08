@@ -49,8 +49,12 @@ export class ObsidianDailyNotesAdapter implements DailyNotesPort {
     private readonly api: DailyNotesApi = defaultApi,
   ) {}
 
+  isAvailable(): boolean {
+    return this.api.isAvailable();
+  }
+
   async listExisting(): Promise<Array<{ date: string; path: string }>> {
-    if (!this.api.isAvailable()) return [];
+    if (!this.isAvailable()) return [];
     return Object.values(this.api.getAllDailyNotes()).flatMap((file) => {
       const date = this.api.getDateFromFile(file, "day");
       return date ? [{ date: date.format("YYYY-MM-DD"), path: normalizeVaultPath(file.path) }] : [];
@@ -58,7 +62,7 @@ export class ObsidianDailyNotesAdapter implements DailyNotesPort {
   }
 
   async resolve(date: string, createIfMissing: boolean): Promise<string | undefined> {
-    if (!this.api.isAvailable()) return undefined;
+    if (!this.isAvailable()) return undefined;
     try {
       const requested = this.api.date(date);
       const existing = this.api.getDailyNote(requested, this.api.getAllDailyNotes());

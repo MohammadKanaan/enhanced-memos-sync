@@ -21,7 +21,8 @@ export interface CoordinatorPorts {
   state(): SyncState;
   token(): Promise<string | undefined>;
   /** Fetches every requested page atomically; rejected pagination must expose no partial records. */
-  fetch(threshold: number, mode: EffectiveSyncMode): Promise<unknown[]>;
+  /** Receives the immutable URL/token snapshot that passed configuration validation. */
+  fetch(threshold: number, mode: EffectiveSyncMode, apiUrl: string, token: string): Promise<unknown[]>;
   vault: VaultPort;
   dailyNotes: DailyNotesPort;
   request: RequestPort;
@@ -103,7 +104,7 @@ export class SyncCoordinator {
     const threshold = computeSyncThreshold(effectiveMode, state.cursor, cutoff);
     let records: unknown[];
     try {
-      records = await this.ports.fetch(threshold, effectiveMode);
+      records = await this.ports.fetch(threshold, effectiveMode, apiUrl, token);
     } catch (error) {
       diagnostics.push({
         severity: "error",
@@ -117,6 +118,14 @@ export class SyncCoordinator {
     const normalized = normalizeRemoteMemos(records);
     counts.normalized = normalized.valid.length;
     diagnostics.push(...normalized.diagnostics);
+
+    try {
+      if (!this.ports.dailyNotes.isAvailable()) {
+        diagnostics.push({ severity: "error", stage: "daily-note", message: "Daily Notes integration is unavailable." });
+      }
+    } catch (error) {
+      diagnostics.push({ severity: "error", stage: "daily-note", message: redact(token, error) });
+    }
 
     const { existingDailyDates, existingMemoPaths, preparationDiagnostics } = await this.readPlanningInputs(
       effectiveMode,

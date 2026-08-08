@@ -83,6 +83,30 @@ describe("sync coordinator", () => {
     expect(fetchCalls[0]?.mode).toBe(effectiveMode);
   });
 
+  it("passes the run's API URL and token snapshot to the fetch boundary", async () => {
+    const inputs: Array<{ apiUrl: string | undefined; token: string | undefined }> = [];
+    const notices: string[] = [];
+    const vault = new InMemoryVault();
+    const coordinator = new SyncCoordinator({
+      settings: () => ({ ...DEFAULT_SETTINGS, apiUrl: "https://snapshot.example" }),
+      state: () => ({ renderSnapshots: {} }),
+      token: async () => "snapshot-token",
+      fetch: ((...args: unknown[]) => {
+        inputs.push({ apiUrl: args[2] as string | undefined, token: args[3] as string | undefined });
+        return Promise.resolve([]);
+      }) as never,
+      vault,
+      dailyNotes: new FakeDailyNotes(),
+      request: new FakeRequestPort(() => ({ status: 200, text: "", arrayBuffer: new Uint8Array().buffer })),
+      commit: async () => {},
+      notice: (message) => notices.push(message),
+      now,
+    });
+
+    await expect(coordinator.run("force")).resolves.toMatchObject({ complete: true });
+    expect(inputs).toEqual([{ apiUrl: "https://snapshot.example", token: "snapshot-token" }]);
+  });
+
   it("renders notes and daily embeds, writes snapshots, and commits the max normalized cursor", async () => {
     const { coordinator, vault, dailyNotes, persistence } = setup({ records: [memo(1_768_867_200)] });
 
@@ -234,6 +258,22 @@ describe("sync coordinator", () => {
     multiDate.dailyNotes.failDates.add("2026-01-19");
     await expect(multiDate.coordinator.run("force")).resolves.toMatchObject({ complete: false, counts: { dailyNotesModified: 1 } });
     expect(multiDate.dailyNotes.notes.get("daily/2026-01-20.md")?.content).toContain("![[2026-01-20-1768867200]]");
+  });
+
+  it("reports an unavailable Daily Notes integration as a partial empty full sync", async () => {
+    const { coordinator, dailyNotes, notices, persistence } = setup({ state: { cursor: 99, renderSnapshots: {} } });
+    dailyNotes.available = false;
+
+    const result = await coordinator.run("force");
+
+    expect(result).toMatchObject({ complete: false });
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      severity: "error",
+      stage: "daily-note",
+      message: "Daily Notes integration is unavailable.",
+    }));
+    expect(persistence.state().cursor).toBe(99);
+    expect(notices.at(-1)).toBe("Memos sync finished with errors.");
   });
 
   it("persists earlier render snapshots and isolates malformed frontmatter when a later memo is partial", async () => {

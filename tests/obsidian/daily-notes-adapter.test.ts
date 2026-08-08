@@ -28,6 +28,7 @@ describe("Obsidian Daily Notes adapter", () => {
       },
     );
 
+    expect(adapter.isAvailable()).toBe(false);
     await expect(adapter.listExisting()).resolves.toEqual([]);
     await expect(adapter.resolve("2026-08-08", true)).resolves.toBeUndefined();
     expect(getAllCalls).toBe(0);

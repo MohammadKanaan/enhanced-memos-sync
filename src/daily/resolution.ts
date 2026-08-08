@@ -1,6 +1,8 @@
 import type { SyncDiagnostic } from "../core/types";
 
 export interface DailyNotesPort {
+  /** Reports integration availability even when there are no dates to resolve. */
+  isAvailable(): boolean;
   listExisting(): Promise<Array<{ date: string; path: string }>>;
   resolve(date: string, createIfMissing: boolean): Promise<string | undefined>;
   read(path: string): Promise<string>;

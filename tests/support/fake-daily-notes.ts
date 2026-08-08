@@ -5,6 +5,11 @@ export class FakeDailyNotes implements DailyNotesPort {
   readonly resolves: Array<{ date: string; createIfMissing: boolean }> = [];
   failDates = new Set<string>();
   listError?: Error;
+  available = true;
+
+  isAvailable(): boolean {
+    return this.available;
+  }
 
   seed(date: string, path: string, content = ""): void {
     this.notes.set(path, { date, content });
