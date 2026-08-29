@@ -70,4 +70,15 @@ describe("settings tab", () => {
     expect(setting("Comment-order regex").text?.value).toBe(DEFAULT_SETTINGS.commentOrderRegex);
     expect(setting("Comment-order regex").descEl.children.map((child) => child.text)).toContain("Enter a valid regular expression.");
   });
+
+  it("routes declarative control writes through the host instead of raw settings", async () => {
+    const plugin = host();
+    const tab = new EnhancedMemosSyncSettingsTab(plugin);
+
+    expect(tab.getControlValue("apiUrl")).toBe("https://memos.example");
+    await tab.setControlValue("apiUrl", "https://declarative.example");
+
+    expect(plugin.saves).toContainEqual(["apiUrl", "https://declarative.example"]);
+    expect(plugin.saves).not.toContainEqual(["commentOrderRegex", "["]);
+  });
 });

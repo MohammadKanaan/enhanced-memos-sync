@@ -45,6 +45,19 @@ export class EnhancedMemosSyncSettingsTab extends PluginSettingTab {
 
   // --- declarative API (1.13.0+) ---
 
+  /**
+   * Route declarative control reads/writes through the host so persistence keeps
+   * the PersistedStore envelope; the framework default would write raw settings
+   * via the plugin's saveData and clobber it.
+   */
+  getControlValue(key: string): unknown {
+    return (this.host.settings as unknown as Record<string, unknown>)[key];
+  }
+
+  async setControlValue(key: string, value: unknown): Promise<void> {
+    await this.host.updateSetting(key as keyof PluginSettings, value as PluginSettings[keyof PluginSettings]);
+  }
+
   getSettingDefinitions(): SettingDefinitionItem[] {
     return [
       this.group("Account", [
