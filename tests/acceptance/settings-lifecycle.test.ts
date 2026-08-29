@@ -18,6 +18,7 @@ describe("SPEC 10.1 settings and lifecycle", () => {
       memoNoteFolder: "Memos", attachmentFolder: "attachments", createMissingDailyNotes: true, skipImages: false,
       mergeCommentsIntoParent: false, commentOrderRegex: "-- (\\d+)/(\\d+) --", syncOnStartup: false,
       startupDelaySeconds: 5, skipStartupSyncIfSyncedToday: true, periodicSyncIntervalMinutes: 0,
+      debugLogging: false,
     });
   });
 

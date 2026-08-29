@@ -41,6 +41,10 @@ Once configured, run a sync from the ribbon button or one of three commands:
 
 In settings you can set the account name, server URL, API token, folders for memo notes and attachments, daily-note header, sync window, threading, and startup or periodic sync. On Obsidian 1.11.4 and newer, a configured token moves to Secret Storage; on older releases it stays in the plugin's data, shown in a password input for compatibility.
 
+### Troubleshooting
+
+Sync errors are always written to the developer console (Ctrl/Cmd+Shift+I) with a `[Enhanced Memos Sync]` prefix — open it to see why a sync failed. Enable **Debug logging** in settings to also log non-fatal diagnostics (warnings and per-item details).
+
 ### Comment-order regex
 
 The **Comment-order regex** setting controls how replies are ordered when merged into a parent memo. Leave it blank for chronological order. The default `-- (\d+)/(\d+) --` extracts a numeric prefix from each comment's text and sorts by that value — useful if your Memos replies are tagged with sequence markers like `-- 1/5 --`, `-- 2/5 --`. If your replies don't use this convention, blank is fine.

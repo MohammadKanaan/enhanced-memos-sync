@@ -50,6 +50,7 @@ describe("settings tab", () => {
       "Memo-note folder", "Attachment folder",
       "Sync-days limit", "Skip images", "Merge comments into parent", "Comment-order regex",
       "Sync on startup", "Startup delay", "Skip startup sync if synced today", "Periodic sync interval",
+      "Debug logging",
     ]);
     expect(setting("API token").text?.inputEl.type).toBe("password");
     await Promise.resolve();

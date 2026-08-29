@@ -16,6 +16,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   startupDelaySeconds: 5,
   skipStartupSyncIfSyncedToday: true,
   periodicSyncIntervalMinutes: 0,
+  debugLogging: false,
 };
 
 export const DEFAULT_STATE: SyncState = {

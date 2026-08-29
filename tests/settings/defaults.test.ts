@@ -20,6 +20,7 @@ describe("settings defaults", () => {
       startupDelaySeconds: 5,
       skipStartupSyncIfSyncedToday: true,
       periodicSyncIntervalMinutes: 0,
+      debugLogging: false,
     });
     expect(DEFAULT_STATE).toEqual({ renderSnapshots: {} });
   });

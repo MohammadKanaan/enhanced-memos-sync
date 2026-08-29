@@ -15,6 +15,7 @@ export interface PluginSettings {
   startupDelaySeconds: number;
   skipStartupSyncIfSyncedToday: boolean;
   periodicSyncIntervalMinutes: number;
+  debugLogging: boolean;
 }
 
 export interface ThreadSegmentSnapshot {

@@ -2,7 +2,7 @@ import { Plugin, requestUrl } from "obsidian";
 
 import { MemosClient } from "./api/memos-client";
 import { toLocalDate } from "./core/date";
-import type { RequestedSyncMode } from "./core/types";
+import type { RequestedSyncMode, SyncResult } from "./core/types";
 import { SyncScheduler } from "./lifecycle/scheduler";
 import { CredentialStore } from "./obsidian/credential-store";
 import { ObsidianDailyNotesAdapter } from "./obsidian/daily-notes-adapter";
@@ -146,14 +146,26 @@ export default class EnhancedMemosSyncPlugin extends Plugin {
   }
 
   private async runSyncSafely(mode: RequestedSyncMode): Promise<void> {
+    let result: SyncResult;
     try {
-      await this.coordinator.run(mode);
+      result = await this.coordinator.run(mode);
     } catch {
       // Boundary implementations redact known secrets; this final guard never reveals error text at all.
+      console.error(`${LOG_PREFIX} sync failed unexpectedly`);
       this.notices.show("Memos sync failed unexpectedly.");
+      return;
+    }
+    for (const diagnostic of result.diagnostics) {
+      if (diagnostic.severity === "error") {
+        console.error(`${LOG_PREFIX} [${diagnostic.stage}] ${diagnostic.message}${diagnostic.path ? ` (${diagnostic.path})` : ""}`);
+      } else if (this.settings.debugLogging) {
+        console.debug(`${LOG_PREFIX} [${diagnostic.stage}] ${diagnostic.message}${diagnostic.path ? ` (${diagnostic.path})` : ""}`);
+      }
     }
   }
 }
+
+const LOG_PREFIX = "[Enhanced Memos Sync]";
 
 function cloneState(state: SyncState): SyncState {
   return {

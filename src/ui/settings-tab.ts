@@ -31,7 +31,7 @@ export interface SettingsTabHost {
 
 type TextKey = "accountName" | "apiUrl" | "dailyNoteHeader" | "memoNoteFolder" | "attachmentFolder" | "commentOrderRegex";
 type NumberKey = "syncDaysLimit" | "startupDelaySeconds" | "periodicSyncIntervalMinutes";
-type ToggleKey = "enabled" | "createMissingDailyNotes" | "skipImages" | "mergeCommentsIntoParent" | "syncOnStartup" | "skipStartupSyncIfSyncedToday";
+type ToggleKey = "enabled" | "createMissingDailyNotes" | "skipImages" | "mergeCommentsIntoParent" | "syncOnStartup" | "skipStartupSyncIfSyncedToday" | "debugLogging";
 
 /**
  * Standard single-account settings UI. Every accepted edit is durable before it is shown as saved.
@@ -72,6 +72,7 @@ export class EnhancedMemosSyncSettingsTab extends PluginSettingTab {
         this.numberDef("startupDelaySeconds", "Startup delay", "Seconds to wait before startup sync."),
         this.toggleDef("skipStartupSyncIfSyncedToday", "Skip startup sync if synced today", "Avoid startup sync after a complete sync today."),
         this.numberDef("periodicSyncIntervalMinutes", "Periodic sync interval", "Minutes between smart syncs; 0 disables it."),
+        this.toggleDef("debugLogging", "Debug logging", "Log non-fatal sync diagnostics to the developer console."),
       ]),
     ];
   }
@@ -188,6 +189,7 @@ export class EnhancedMemosSyncSettingsTab extends PluginSettingTab {
     this.integer("Startup delay", "Seconds to wait before startup sync.", "startupDelaySeconds");
     this.toggle("Skip startup sync if synced today", "Avoid startup sync after a complete sync today.", "skipStartupSyncIfSyncedToday");
     this.integer("Periodic sync interval", "Minutes between smart syncs; 0 disables it.", "periodicSyncIntervalMinutes");
+    this.toggle("Debug logging", "Log non-fatal sync diagnostics to the developer console.", "debugLogging");
   }
 
   private text<K extends TextKey | NumberKey>(
