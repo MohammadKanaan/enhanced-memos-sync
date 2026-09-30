@@ -40,6 +40,13 @@ export default class EnhancedMemosSyncPlugin extends Plugin {
     const finalizer = new PersistedSyncFinalizer(this.store, vault);
     await finalizer.recoverPendingFinalization();
     const persisted = await this.store.load();
+    // Rewrite files whose settings were saved outside the envelope so the recovery happens once.
+    // A failed rewrite must not block loading; the store keeps the flag and retries next launch.
+    try {
+      await this.store.persistIfMigrated();
+    } catch {
+      console.error(`${LOG_PREFIX} could not rewrite migrated settings; will retry on next load`);
+    }
     this.settings = persisted.settings;
     this.state = persisted.state;
 
@@ -89,7 +96,7 @@ export default class EnhancedMemosSyncPlugin extends Plugin {
       clearTimeout: (id) => window.clearTimeout(id),
       setInterval: (callback, milliseconds) => window.setInterval(callback, milliseconds),
       clearInterval: (id) => window.clearInterval(id),
-      runSmart: () => this.runSyncSafely("smart"),
+      runSmart: () => this.runSyncSafely("smart", true),
       today: () => toLocalDate(Math.floor(Date.now() / 1_000)),
     });
 
@@ -109,6 +116,22 @@ export default class EnhancedMemosSyncPlugin extends Plugin {
 
   onunload(): void {
     this.scheduler?.clear();
+  }
+
+  /** Called by Obsidian when data.json changes on disk, e.g. through Obsidian Sync. */
+  async onExternalSettingsChange(): Promise<void> {
+    try {
+      const previousInterval = this.settings.periodicSyncIntervalMinutes;
+      const persisted = await this.store.reload();
+      this.settings = persisted.settings;
+      this.state = persisted.state;
+      await this.credentials.migrate(this.settings);
+      if (this.settings.periodicSyncIntervalMinutes !== previousInterval) {
+        this.scheduler.reschedulePeriodic(this.settings.periodicSyncIntervalMinutes);
+      }
+    } catch {
+      console.error(`${LOG_PREFIX} failed to reload externally changed settings`);
+    }
   }
 
   async updateSetting<K extends keyof PluginSettings>(key: K, value: PluginSettings[K]): Promise<void> {
@@ -145,7 +168,9 @@ export default class EnhancedMemosSyncPlugin extends Plugin {
     await this.store.saveSettings(this.settings);
   }
 
-  private async runSyncSafely(mode: RequestedSyncMode): Promise<void> {
+  private async runSyncSafely(mode: RequestedSyncMode, scheduled = false): Promise<void> {
+    // Timers must not raise a "configuration incomplete" notice on every tick while sync is off or unset.
+    if (scheduled && (!this.settings.enabled || !this.settings.apiUrl.trim())) return;
     let result: SyncResult;
     try {
       result = await this.coordinator.run(mode);

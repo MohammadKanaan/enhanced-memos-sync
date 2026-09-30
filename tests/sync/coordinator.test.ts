@@ -347,6 +347,20 @@ describe("sync coordinator", () => {
     expect(multiDate.dailyNotes.notes.get("daily/2026-01-20.md")?.content).toContain("![[2026-01-20-1768867200]]");
   });
 
+  it("skips missing daily notes with a warning when creating them is disabled", async () => {
+    const { coordinator, dailyNotes, persistence } = setup({
+      records: [memo(1_768_867_200)],
+      settings: { createMissingDailyNotes: false },
+    });
+
+    const result = await coordinator.run("force");
+
+    expect(result).toMatchObject({ complete: true, counts: { memoNotesWritten: 1, dailyNotesModified: 0 } });
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ severity: "warning", stage: "daily-note", date: "2026-01-20" }));
+    expect(dailyNotes.notes.size).toBe(0);
+    expect(persistence.state().cursor).toBe(1_768_867_200);
+  });
+
   it("reports an unavailable Daily Notes integration as a partial empty full sync", async () => {
     const { coordinator, dailyNotes, notices, persistence } = setup({ state: { cursor: 99, renderSnapshots: {} } });
     dailyNotes.available = false;

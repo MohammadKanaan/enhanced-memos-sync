@@ -22,7 +22,9 @@ export function computeCutoffTimestamp(now: Date, syncDaysLimit: number): number
   const cutoff = new Date(now);
   cutoff.setHours(0, 0, 0, 0);
   cutoff.setDate(cutoff.getDate() - syncDaysLimit);
-  return Math.floor(cutoff.getTime() / 1_000);
+  const timestamp = Math.floor(cutoff.getTime() / 1_000);
+  // A window reaching before the Unix epoch (or beyond Date's range) is effectively unlimited.
+  return Number.isSafeInteger(timestamp) && timestamp > 0 ? timestamp : 0;
 }
 
 export function computeSyncThreshold(

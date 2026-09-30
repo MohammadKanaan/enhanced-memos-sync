@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { SyncScheduler } from "../../src/lifecycle/scheduler";
+import { MAX_TIMER_DELAY_MS, SyncScheduler } from "../../src/lifecycle/scheduler";
 
 describe("sync scheduler", () => {
   it("runs smart sync after layout and replaces periodic timers", () => {
@@ -92,5 +92,24 @@ describe("sync scheduler", () => {
     layout();
     scheduler.clear();
     expect(calls).toEqual(["timeout:3000", "sync", "timeout:3000", "timeout-clear:42"]);
+  });
+
+  it("clamps delays that would overflow host timers into an immediate sync loop", () => {
+    let layout!: () => void;
+    const delays: number[] = [];
+    const scheduler = new SyncScheduler({
+      onLayoutReady: (callback) => { layout = callback; },
+      setTimeout: (_callback, milliseconds) => { delays.push(milliseconds); return 1; },
+      clearTimeout: () => {},
+      setInterval: (_callback, milliseconds) => { delays.push(milliseconds); return 2; },
+      clearInterval: () => {},
+      runSmart: () => {},
+      today: () => "2026-01-01",
+    });
+
+    scheduler.schedule({ syncOnStartup: true, startupDelaySeconds: 10_000_000, skipStartupSyncIfSyncedToday: false, periodicSyncIntervalMinutes: 100_000 }, undefined);
+    layout();
+
+    expect(delays).toEqual([MAX_TIMER_DELAY_MS, MAX_TIMER_DELAY_MS]);
   });
 });

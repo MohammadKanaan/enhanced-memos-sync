@@ -15,6 +15,13 @@ export interface SchedulerPort {
   today(): string;
 }
 
+/** Hosts fire timers immediately when a delay exceeds a signed 32-bit millisecond count. */
+export const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+function timerDelay(milliseconds: number): number {
+  return Math.min(Math.max(0, milliseconds), MAX_TIMER_DELAY_MS);
+}
+
 /** Owns the two host timers used by sync and deliberately never queues work. */
 export class SyncScheduler {
   private timeout?: number;
@@ -45,7 +52,7 @@ export class SyncScheduler {
           this.timeout = this.port.setTimeout(() => {
             this.timeout = undefined;
             this.runSmart();
-          }, settings.startupDelaySeconds * 1_000);
+          }, timerDelay(settings.startupDelaySeconds * 1_000));
         }
       }
 
@@ -71,7 +78,7 @@ export class SyncScheduler {
     if (this.periodicIntervalMinutes <= 0 || this.interval !== undefined) return;
     this.interval = this.port.setInterval(
       () => this.runSmart(),
-      this.periodicIntervalMinutes * 60_000,
+      timerDelay(this.periodicIntervalMinutes * 60_000),
     );
   }
 

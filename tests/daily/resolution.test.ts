@@ -16,11 +16,9 @@ class FakeDailyNotes implements DailyNotesPort {
     return date === "2026-01-01" ? "daily/custom.md" : undefined;
   }
 
-  async read(): Promise<string> {
-    return "";
+  async update(): Promise<boolean> {
+    return false;
   }
-
-  async write(): Promise<void> {}
 }
 
 describe("daily-note resolution", () => {
