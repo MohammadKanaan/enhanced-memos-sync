@@ -13,6 +13,9 @@
     "check": "bun run typecheck && bun run test && bun run bundle",
     "version": "bash scripts/set-version.sh"
   },
+  "overrides": {
+    "moment": "^2.31.0"
+  },
   "dependencies": {
     "diff": "^8.0.2",
     "obsidian-daily-notes-interface": "0.9.4",
@@ -24,6 +27,6 @@
     "esbuild": "0.25.5",
     "obsidian": "latest",
     "typescript": "^5.8.3",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.11"
   }
 }
