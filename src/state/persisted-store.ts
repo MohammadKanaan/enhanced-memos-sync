@@ -1,4 +1,5 @@
 import { DEFAULT_SETTINGS, DEFAULT_STATE } from "../settings/defaults";
+import { SETTING_MAXIMUMS } from "../settings/validation";
 import type {
   PersistedData,
   PluginSettings,
@@ -19,50 +20,81 @@ export interface FinalizationRecoveryVault {
 
 export class PersistedStore {
   private data?: PersistedData;
+  /** True when the loaded file was not in the canonical envelope shape and must be rewritten. */
+  private needsRewrite = false;
   private writeChain: Promise<void> = Promise.resolve();
 
   constructor(private readonly port: PersistedDataPort) {}
 
   async load(): Promise<PersistedData> {
     if (!this.data) {
-      this.data = sanitizePersistedData(await this.port.loadData());
+      this.accept(await this.port.loadData());
     }
 
-    return cloneData(this.data);
+    return cloneData(this.data!);
+  }
+
+  /** Discards the cache and re-reads persisted data after pending writes settle, e.g. after an external sync. */
+  async reload(): Promise<PersistedData> {
+    await this.enqueue(async () => {
+      this.accept(await this.port.loadData());
+    });
+    return cloneData(this.data!);
+  }
+
+  /**
+   * Rewrites the file in the canonical envelope when loading had to recover
+   * settings written outside it (for example by Obsidian's declarative
+   * settings framework writing `plugin.settings` directly).
+   */
+  async persistIfMigrated(): Promise<boolean> {
+    await this.load();
+    let rewritten = false;
+    await this.enqueue(async () => {
+      if (!this.needsRewrite || !this.data) return;
+      await this.port.saveData(cloneData(this.data));
+      this.needsRewrite = false;
+      rewritten = true;
+    });
+    return rewritten;
   }
 
   async saveSettings(settings: PluginSettings): Promise<void> {
     await this.load();
     return this.enqueue(async () => {
-      const current = this.data ?? sanitizePersistedData(undefined);
-      this.data = {
+      const current = this.data ?? sanitizePersistedData(undefined).data;
+      const next: PersistedData = {
         schemaVersion: 1,
         settings: sanitizeSettings(settings),
         state: current.state,
         ...(current.finalizationJournal ? { finalizationJournal: cloneFinalization(current.finalizationJournal) } : {}),
       };
-      await this.port.saveData(cloneData(this.data));
+      await this.port.saveData(cloneData(next));
+      this.data = next;
+      this.needsRewrite = false;
     });
   }
 
   async updateState(update: (state: SyncState) => SyncState): Promise<void> {
     await this.load();
     return this.enqueue(async () => {
-      const current = this.data ?? sanitizePersistedData(undefined);
-      this.data = {
+      const current = this.data ?? sanitizePersistedData(undefined).data;
+      const next: PersistedData = {
         schemaVersion: 1,
         settings: current.settings,
         state: sanitizeState(update(cloneState(current.state))),
         ...(current.finalizationJournal ? { finalizationJournal: cloneFinalization(current.finalizationJournal) } : {}),
       };
-      await this.port.saveData(cloneData(this.data));
+      await this.port.saveData(cloneData(next));
+      this.data = next;
+      this.needsRewrite = false;
     });
   }
 
   async prepareFinalization(finalization: SuccessfulSyncFinalization): Promise<void> {
     await this.load();
     return this.enqueue(async () => {
-      const current = this.data ?? sanitizePersistedData(undefined);
+      const current = this.data ?? sanitizePersistedData(undefined).data;
       if (current.finalizationJournal) {
         throw new Error("A prepared sync finalization must be recovered before another can begin.");
       }
@@ -74,13 +106,14 @@ export class PersistedStore {
       };
       await this.port.saveData(cloneData(next));
       this.data = next;
+      this.needsRewrite = false;
     });
   }
 
   async completeFinalization(): Promise<void> {
     await this.load();
     return this.enqueue(async () => {
-      const current = this.data ?? sanitizePersistedData(undefined);
+      const current = this.data ?? sanitizePersistedData(undefined).data;
       const journal = current.finalizationJournal;
       if (!journal) throw new Error("No prepared sync finalization exists.");
       const next: PersistedData = {
@@ -90,6 +123,7 @@ export class PersistedStore {
       };
       await this.port.saveData(cloneData(next));
       this.data = next;
+      this.needsRewrite = false;
     });
   }
 
@@ -97,7 +131,7 @@ export class PersistedStore {
     await this.load();
     let recovered = false;
     await this.enqueue(async () => {
-      const current = this.data ?? sanitizePersistedData(undefined);
+      const current = this.data ?? sanitizePersistedData(undefined).data;
       const journal = current.finalizationJournal;
       if (!journal) return;
       for (const deletion of [...journal.deletions].reverse()) {
@@ -112,9 +146,16 @@ export class PersistedStore {
       };
       await this.port.saveData(cloneData(next));
       this.data = next;
+      this.needsRewrite = false;
       recovered = true;
     });
     return recovered;
+  }
+
+  private accept(raw: unknown): void {
+    const { data, migrated } = sanitizePersistedData(raw);
+    this.data = data;
+    this.needsRewrite = migrated;
   }
 
   private enqueue(operation: () => Promise<void>): Promise<void> {
@@ -127,14 +168,24 @@ export class PersistedStore {
   }
 }
 
-function sanitizePersistedData(raw: unknown): PersistedData {
+const SETTING_KEYS = [...Object.keys(DEFAULT_SETTINGS), "apiToken"] as const;
+
+function sanitizePersistedData(raw: unknown): { data: PersistedData; migrated: boolean } {
   const data = isRecord(raw) ? raw : {};
   const journal = sanitizeFinalization(data.finalizationJournal);
+  // Settings found at the top level were written outside the envelope (Obsidian 1.13's
+  // default setControlValue saves `plugin.settings` as the whole file). Every envelope
+  // write drops them, so when present they are newer than `data.settings`.
+  const stray = Object.fromEntries(SETTING_KEYS.filter((key) => key in data).map((key) => [key, data[key]]));
+  const envelope = isRecord(data.settings) ? data.settings : {};
   return {
-    schemaVersion: 1,
-    settings: sanitizeSettings(data.settings),
-    state: sanitizeState(data.state),
-    ...(journal ? { finalizationJournal: journal } : {}),
+    data: {
+      schemaVersion: 1,
+      settings: sanitizeSettings({ ...envelope, ...stray }),
+      state: sanitizeState(data.state),
+      ...(journal ? { finalizationJournal: journal } : {}),
+    },
+    migrated: Object.keys(stray).length > 0,
   };
 }
 
@@ -144,16 +195,29 @@ function sanitizeSettings(raw: unknown): PluginSettings {
 
   for (const key of Object.keys(DEFAULT_SETTINGS) as Array<keyof PluginSettings>) {
     const value = source[key];
-    if (typeof value === typeof DEFAULT_SETTINGS[key]) {
+    if (key in SETTING_MAXIMUMS) {
+      const number = toInteger(value);
+      if (number !== undefined && number >= 0 && number <= SETTING_MAXIMUMS[key as keyof typeof SETTING_MAXIMUMS]) {
+        result[key] = number as never;
+      }
+    } else if (typeof value === typeof DEFAULT_SETTINGS[key]) {
       result[key] = value as never;
     }
   }
+
+  if (!result.accountName.trim()) result.accountName = DEFAULT_SETTINGS.accountName;
+  if (/^#*$/.test(result.dailyNoteHeader.trim())) result.dailyNoteHeader = DEFAULT_SETTINGS.dailyNoteHeader;
 
   if (typeof source.apiToken === "string") {
     result.apiToken = source.apiToken;
   }
 
   return result;
+}
+
+function toInteger(value: unknown): number | undefined {
+  const number = typeof value === "string" && /^\s*\d+\s*$/.test(value) ? Number(value) : value;
+  return typeof number === "number" && Number.isSafeInteger(number) ? number : undefined;
 }
 
 function sanitizeState(raw: unknown): SyncState {

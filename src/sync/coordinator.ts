@@ -413,21 +413,25 @@ export class SyncCoordinator {
       try {
         path = await this.ports.dailyNotes.resolve(date, settings.createMissingDailyNotes);
         if (!path) {
+          if (!settings.createMissingDailyNotes && this.ports.dailyNotes.isAvailable()) {
+            // The user opted out of creating notes, so a missing note is expected rather than a failure.
+            diagnostics.push({ severity: "warning", stage: "daily-note", date, message: "Daily note does not exist and creating missing daily notes is disabled." });
+            continue;
+          }
           diagnostics.push({ severity: "error", stage: "daily-note", date, message: "Daily Notes integration could not resolve this date." });
           continue;
         }
-        const existing = await this.ports.dailyNotes.read(path);
-        const updated = updateManagedSection(
-          existing,
-          settings.dailyNoteHeader,
-          [...(plan.authoritativeByDate.get(date) ?? [])],
-          mode,
-        );
-        diagnostics.push(...updated.diagnostics.map((diagnostic) => ({ ...diagnostic, date, path })));
-        if (updated.content !== existing) {
-          await this.ports.dailyNotes.write(path, updated.content);
-          modified += 1;
-        }
+        const notePath = path;
+        let sectionDiagnostics: SyncDiagnostic[] = [];
+        const targets = [...(plan.authoritativeByDate.get(date) ?? [])];
+        // Transform inside the host's atomic update so edits made since resolution are not overwritten.
+        const changed = await this.ports.dailyNotes.update(notePath, (existing) => {
+          const updated = updateManagedSection(existing, settings.dailyNoteHeader, targets, mode);
+          sectionDiagnostics = updated.diagnostics;
+          return updated.content;
+        });
+        diagnostics.push(...sectionDiagnostics.map((diagnostic) => ({ ...diagnostic, date, path: notePath })));
+        if (changed) modified += 1;
       } catch (error) {
         diagnostics.push({ severity: "error", stage: "daily-note", date, ...(path ? { path } : {}), message: redact(token, error) });
       }

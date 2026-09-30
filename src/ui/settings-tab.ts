@@ -13,10 +13,12 @@ import {
 import { DEFAULT_SETTINGS } from "../settings/defaults";
 import type { PluginSettings } from "../settings/types";
 import {
-  normalizeHeader,
+  SETTING_MAXIMUMS,
+  validateAccountName,
   validateApiUrl,
   validateCommentOrderRegex,
   validateFolder,
+  validateHeader,
   validateNonNegativeInteger,
   type ValidationResult,
 } from "../settings/validation";
@@ -55,13 +57,16 @@ export class EnhancedMemosSyncSettingsTab extends PluginSettingTab {
   }
 
   async setControlValue(key: string, value: unknown): Promise<void> {
-    await this.host.updateSetting(key as keyof PluginSettings, value as PluginSettings[keyof PluginSettings]);
+    // Apply the same normalization as the imperative UI so both paths persist identical values.
+    const result = normalizeControlValue(key, value, this.host.settings);
+    if (result.error !== undefined) throw new Error(result.error);
+    await this.host.updateSetting(key as keyof PluginSettings, result.value as PluginSettings[keyof PluginSettings]);
   }
 
   getSettingDefinitions(): SettingDefinitionItem[] {
     return [
       this.group("Account", [
-        this.textDef("accountName", "Account name", "Used in memo metadata and diagnostics.", (v) => v.trim() ? undefined : "Enter a name."),
+        this.textDef("accountName", "Account name", "Used in memo metadata and diagnostics.", (v) => validateAccountName(v, v).error),
         this.toggleDef("enabled", "Enabled", "Synchronize this Memos account."),
       ]),
       this.group("Connection", [
@@ -69,7 +74,7 @@ export class EnhancedMemosSyncSettingsTab extends PluginSettingTab {
         this.tokenDefinition(),
       ]),
       this.group("Daily Notes", [
-        this.textDef("dailyNoteHeader", "Daily-note header", "Heading for the managed daily-note section.", () => undefined),
+        this.textDef("dailyNoteHeader", "Daily-note header", "Heading for the managed daily-note section.", (v) => validateHeader(v, v).error),
         this.toggleDef("createMissingDailyNotes", "Create missing daily notes", "Create daily notes when a memo needs one."),
       ]),
       this.group("Folders", [
@@ -115,10 +120,10 @@ export class EnhancedMemosSyncSettingsTab extends PluginSettingTab {
         type: "number" as const,
         key,
         defaultValue: DEFAULT_SETTINGS[key],
-        validate: (value: number) => {
-          if (!Number.isSafeInteger(value) || value < 0) return "Enter a non-negative whole number.";
-          return undefined;
-        },
+        min: 0,
+        max: SETTING_MAXIMUMS[key],
+        step: 1,
+        validate: (value: number) => validateNumber(key, value).error,
       },
     };
   }
@@ -174,7 +179,7 @@ export class EnhancedMemosSyncSettingsTab extends PluginSettingTab {
 
     // Account
     new Setting(this.containerEl).setName("Account").setHeading();
-    this.text("Account name", "Used in memo metadata and diagnostics.", "accountName", (value, previous) => ({ value: value.trim() || previous }));
+    this.text("Account name", "Used in memo metadata and diagnostics.", "accountName", validateAccountName);
     this.toggle("Enabled", "Synchronize this Memos account.", "enabled");
 
     // Connection
@@ -184,7 +189,7 @@ export class EnhancedMemosSyncSettingsTab extends PluginSettingTab {
 
     // Daily Notes
     new Setting(this.containerEl).setName("Daily Notes").setHeading();
-    this.text("Daily-note header", "Heading for the managed daily-note section.", "dailyNoteHeader", (value) => ({ value: normalizeHeader(value) }));
+    this.text("Daily-note header", "Heading for the managed daily-note section.", "dailyNoteHeader", validateHeader);
     this.toggle("Create missing daily notes", "Create daily notes when a memo needs one.", "createMissingDailyNotes");
 
     // Folders
@@ -215,20 +220,18 @@ export class EnhancedMemosSyncSettingsTab extends PluginSettingTab {
     const error = setting.descEl.createDiv({ cls: "enhanced-memos-sync-validation-error" });
     setting.addText((component) => {
       component.setValue(String(this.host.settings[key] ?? ""));
+      // onChange fires per keystroke: leave the user's text alone so partial input (a URL
+      // being typed, a folder ending in "/") can be completed; only the saved value is normalized.
       component.onChange(async (input) => {
-        const previous = this.host.settings[key];
-        const result = validate(input, previous);
+        const result = validate(input, this.host.settings[key]);
         if (result.error) {
-          component.setValue(String(result.value));
           error.textContent = result.error;
           return;
         }
         try {
           await this.host.updateSetting(key, result.value);
-          component.setValue(String(this.host.settings[key] ?? result.value));
           error.textContent = "";
         } catch {
-          component.setValue(String(previous));
           error.textContent = "Unable to save this setting.";
         }
       });
@@ -236,7 +239,7 @@ export class EnhancedMemosSyncSettingsTab extends PluginSettingTab {
   }
 
   private integer<K extends NumberKey>(name: string, description: string, key: K): void {
-    this.text(name, description, key, validateNonNegativeInteger);
+    this.text(name, description, key, (input, previous) => validateNonNegativeInteger(input, previous, SETTING_MAXIMUMS[key]));
   }
 
   private toggle<K extends ToggleKey>(name: string, description: string, key: K): void {
@@ -279,5 +282,42 @@ export class EnhancedMemosSyncSettingsTab extends PluginSettingTab {
         }
       });
     });
+  }
+}
+
+const TOGGLE_KEYS: ReadonlySet<string> = new Set<ToggleKey>([
+  "enabled", "createMissingDailyNotes", "skipImages", "mergeCommentsIntoParent", "syncOnStartup", "skipStartupSyncIfSyncedToday", "debugLogging",
+]);
+
+function validateNumber(key: NumberKey, value: number): ValidationResult<number> {
+  return typeof value === "number" && Number.isSafeInteger(value)
+    ? validateNonNegativeInteger(String(value), value, SETTING_MAXIMUMS[key])
+    : { value: DEFAULT_SETTINGS[key], error: "Enter a non-negative whole number." };
+}
+
+function normalizeControlValue(key: string, value: unknown, current: PluginSettings): ValidationResult<unknown> {
+  switch (key) {
+    case "accountName":
+      return validateAccountName(String(value ?? ""), current.accountName);
+    case "apiUrl":
+      return validateApiUrl(String(value ?? ""), current.apiUrl);
+    case "dailyNoteHeader":
+      return validateHeader(String(value ?? ""), current.dailyNoteHeader);
+    case "memoNoteFolder":
+    case "attachmentFolder":
+      return validateFolder(String(value ?? ""), current[key], DEFAULT_SETTINGS[key]);
+    case "commentOrderRegex":
+      return validateCommentOrderRegex(String(value ?? ""), current.commentOrderRegex);
+    case "syncDaysLimit":
+    case "startupDelaySeconds":
+    case "periodicSyncIntervalMinutes":
+      return typeof value === "string"
+        ? validateNonNegativeInteger(value, current[key], SETTING_MAXIMUMS[key])
+        : validateNumber(key, value as number);
+    default:
+      if (TOGGLE_KEYS.has(key)) {
+        return typeof value === "boolean" ? { value } : { value: undefined, error: "Expected a toggle value." };
+      }
+      return { value: undefined, error: `Unknown setting: ${key}` };
   }
 }

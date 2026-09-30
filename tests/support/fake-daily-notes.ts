@@ -31,16 +31,13 @@ export class FakeDailyNotes implements DailyNotesPort {
     return path;
   }
 
-  async read(path: string): Promise<string> {
+  async update(path: string, transform: (content: string) => string): Promise<boolean> {
     const note = this.notes.get(path);
     if (!note) throw new Error(`missing daily note: ${path}`);
-    return note.content;
-  }
-
-  async write(path: string, content: string): Promise<void> {
-    const note = this.notes.get(path);
-    if (!note) throw new Error(`missing daily note: ${path}`);
+    const content = transform(note.content);
+    if (content === note.content) return false;
     if (this.failDates.has(note.date)) throw new Error(`daily failure: ${note.date}`);
     note.content = content;
+    return true;
   }
 }

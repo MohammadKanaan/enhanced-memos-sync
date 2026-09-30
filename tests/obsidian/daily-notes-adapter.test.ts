@@ -9,8 +9,7 @@ describe("Obsidian Daily Notes adapter", () => {
     const adapter = new ObsidianDailyNotesAdapter(
       {
         getAbstractFileByPath: () => null,
-        read: async () => "",
-        modify: async () => {},
+        process: async () => "",
       },
       {
         isAvailable: () => false,
@@ -40,8 +39,7 @@ describe("Obsidian Daily Notes adapter", () => {
     const adapter = new ObsidianDailyNotesAdapter(
       {
         getAbstractFileByPath: (path) => path === existing.path ? existing : null,
-        read: async () => "existing daily note",
-        modify: async () => {},
+        process: async (_file, update) => update("existing daily note"),
       },
       {
         isAvailable: () => true,
@@ -55,17 +53,17 @@ describe("Obsidian Daily Notes adapter", () => {
 
     await expect(adapter.listExisting()).resolves.toEqual([{ date: "2026-08-08", path: "Journal/August 8th.md" }]);
     await expect(adapter.resolve("2026-08-08", false)).resolves.toBe("Journal/August 8th.md");
-    await expect(adapter.read(existing.path)).resolves.toBe("existing daily note");
+    await expect(adapter.update(existing.path, (content) => content)).resolves.toBe(false);
+    await expect(adapter.update(existing.path, (content) => `${content}!`)).resolves.toBe(true);
   });
 
-  it("creates through Daily Notes only when permitted and returns undefined when the integration cannot resolve a date", async () => {
+  it("creates through Daily Notes only when permitted and updates the current note content atomically", async () => {
     let createCalls = 0;
     let written = "";
     const adapter = new ObsidianDailyNotesAdapter(
       {
         getAbstractFileByPath: (path) => path === "Journal/new.md" ? { path, extension: "md" } : null,
-        read: async () => "",
-        modify: async (_file, content) => { written = content; },
+        process: async (_file, update) => { written = update("current"); return written; },
       },
       {
         isAvailable: () => true,
@@ -82,8 +80,42 @@ describe("Obsidian Daily Notes adapter", () => {
 
     await expect(adapter.resolve("2026-08-08", false)).resolves.toBeUndefined();
     await expect(adapter.resolve("2026-08-08", true)).resolves.toBe("Journal/new.md");
-    await adapter.write("/Journal/new.md/", "updated");
+    await expect(adapter.update("/Journal/new.md/", (content) => `${content} updated`)).resolves.toBe(true);
     expect(createCalls).toBe(1);
-    expect(written).toBe("updated");
+    expect(written).toBe("current updated");
+  });
+
+  it("surfaces integration failures instead of reporting them as a missing note", async () => {
+    const adapter = new ObsidianDailyNotesAdapter(
+      { getAbstractFileByPath: () => null, process: async () => "" },
+      {
+        isAvailable: () => true,
+        date: (value) => ({ value, format: () => value }),
+        getAllDailyNotes: () => ({}),
+        getDateFromFile: () => null,
+        getDailyNote: () => undefined,
+        createDailyNote: async () => undefined,
+      },
+    );
+
+    await expect(adapter.resolve("2026-08-08", false)).resolves.toBeUndefined();
+    await expect(adapter.resolve("2026-08-08", true)).rejects.toThrow("could not create");
+  });
+
+  it("fails when the host resolves without running the transform", async () => {
+    const file = { path: "Journal/day.md", extension: "md" };
+    const adapter = new ObsidianDailyNotesAdapter(
+      { getAbstractFileByPath: () => file, process: async () => "" },
+      {
+        isAvailable: () => true,
+        date: (value) => ({ value, format: () => value }),
+        getAllDailyNotes: () => ({}),
+        getDateFromFile: () => null,
+        getDailyNote: () => undefined,
+        createDailyNote: async () => undefined,
+      },
+    );
+
+    await expect(adapter.update(file.path, (content) => `${content}!`)).rejects.toThrow("did not run");
   });
 });

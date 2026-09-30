@@ -6,6 +6,7 @@ import {
   toCreatedAtIso,
   toLocalDate,
 } from "../../src/core/date";
+import { SETTING_MAXIMUMS } from "../../src/settings/validation";
 
 const originalTimezone = process.env.TZ;
 
@@ -14,6 +15,14 @@ afterEach(() => {
 });
 
 describe("core dates", () => {
+  it("treats a sync window reaching before the Unix epoch as unlimited", () => {
+    expect(computeCutoffTimestamp(new Date(2026, 0, 20, 12), 36_500)).toBe(0);
+  });
+
+  it("keeps the largest selectable sync-days limit a real cutoff rather than unlimited", () => {
+    expect(computeCutoffTimestamp(new Date(2026, 0, 20, 12), SETTING_MAXIMUMS.syncDaysLimit)).toBeGreaterThan(0);
+  });
+
   it("uses local calendar dates while retaining UTC metadata", () => {
     process.env.TZ = "Asia/Beirut";
     const timestamp = Date.UTC(2025, 11, 31, 22, 30, 0) / 1_000;

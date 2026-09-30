@@ -20,8 +20,7 @@ interface DateValue {
 
 interface DailyNotesVault {
   getAbstractFileByPath(path: string): unknown;
-  read(file: DailyNoteFile): Promise<string>;
-  modify(file: DailyNoteFile, content: string): Promise<void>;
+  process(file: DailyNoteFile, update: (content: string) => string): Promise<string>;
 }
 
 export interface DailyNotesApi {
@@ -30,7 +29,8 @@ export interface DailyNotesApi {
   getAllDailyNotes(): Record<string, DailyNoteFile>;
   getDateFromFile(file: DailyNoteFile, granularity: "day"): DateValue | null;
   getDailyNote(date: DateValue, notes: Record<string, DailyNoteFile>): DailyNoteFile | undefined;
-  createDailyNote(date: DateValue): Promise<DailyNoteFile>;
+  /** The library reports creation failures with a notice and resolves undefined. */
+  createDailyNote(date: DateValue): Promise<DailyNoteFile | undefined>;
 }
 
 const defaultApi: DailyNotesApi = {
@@ -63,24 +63,28 @@ export class ObsidianDailyNotesAdapter implements DailyNotesPort {
 
   async resolve(date: string, createIfMissing: boolean): Promise<string | undefined> {
     if (!this.isAvailable()) return undefined;
-    try {
-      const requested = this.api.date(date);
-      const existing = this.api.getDailyNote(requested, this.api.getAllDailyNotes());
-      if (existing) return normalizeVaultPath(existing.path);
-      if (!createIfMissing) return undefined;
-      return normalizeVaultPath((await this.api.createDailyNote(requested)).path);
-    } catch {
-      // The caller turns an unresolved date into a visible partial-sync diagnostic.
-      return undefined;
-    }
+    // Failures propagate so the caller reports them instead of mistaking them for a missing note.
+    const requested = this.api.date(date);
+    const existing = this.api.getDailyNote(requested, this.api.getAllDailyNotes());
+    if (existing) return normalizeVaultPath(existing.path);
+    if (!createIfMissing) return undefined;
+    const created = await this.api.createDailyNote(requested);
+    if (!created) throw new Error(`Daily Notes could not create the note for ${date}.`);
+    return normalizeVaultPath(created.path);
   }
 
-  async read(path: string): Promise<string> {
-    return this.vault.read(this.requiredFile(path));
-  }
-
-  async write(path: string, content: string): Promise<void> {
-    await this.vault.modify(this.requiredFile(path), content);
+  async update(path: string, transform: (content: string) => string): Promise<boolean> {
+    let changed = false;
+    let transformed = false;
+    await this.vault.process(this.requiredFile(path), (current) => {
+      transformed = true;
+      const next = transform(current);
+      changed = next !== current;
+      return changed ? next : current;
+    });
+    // Callers read results captured by the transform, so a host that skipped or deferred it must fail loudly.
+    if (!transformed) throw new Error(`Daily note update did not run: ${normalizeVaultPath(path)}.`);
+    return changed;
   }
 
   private requiredFile(path: string): DailyNoteFile {

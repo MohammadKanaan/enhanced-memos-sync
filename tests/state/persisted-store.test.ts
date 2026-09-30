@@ -5,16 +5,22 @@ import { PersistedStore } from "../../src/state/persisted-store";
 
 class FakeDataAdapter {
   readonly saved: unknown[] = [];
+  failNextSave = false;
 
-  constructor(private readonly loaded: unknown) {}
+  constructor(public loaded: unknown) {}
 
   async loadData(): Promise<unknown> {
-    return this.loaded;
+    return structuredClone(this.loaded);
   }
 
   async saveData(data: unknown): Promise<void> {
     await Promise.resolve();
+    if (this.failNextSave) {
+      this.failNextSave = false;
+      throw new Error("disk full");
+    }
     this.saved.push(structuredClone(data));
+    this.loaded = structuredClone(data);
   }
 }
 
@@ -91,5 +97,101 @@ describe("PersistedStore", () => {
       settings: { accountName: "Updated while prepared" },
       finalizationJournal: journal,
     });
+  });
+
+  it("recovers settings that were saved as a flat file outside the envelope and rewrites it once", async () => {
+    const adapter = new FakeDataAdapter({
+      ...DEFAULT_SETTINGS,
+      accountName: "Flat",
+      apiUrl: "https://flat.example",
+      periodicSyncIntervalMinutes: 15,
+      apiToken: "legacy",
+    });
+    const store = new PersistedStore(adapter);
+
+    await expect(store.load()).resolves.toMatchObject({
+      settings: { accountName: "Flat", apiUrl: "https://flat.example", periodicSyncIntervalMinutes: 15, apiToken: "legacy" },
+    });
+    await expect(store.persistIfMigrated()).resolves.toBe(true);
+    await expect(store.persistIfMigrated()).resolves.toBe(false);
+    expect(adapter.saved).toEqual([{
+      schemaVersion: 1,
+      settings: { ...DEFAULT_SETTINGS, accountName: "Flat", apiUrl: "https://flat.example", periodicSyncIntervalMinutes: 15, apiToken: "legacy" },
+      state: { renderSnapshots: {} },
+    }]);
+  });
+
+  it("lets stray top-level settings override the envelope without dropping state or the journal", async () => {
+    const journal = {
+      priorState: { cursor: 5, renderSnapshots: {} },
+      nextState: { cursor: 6, renderSnapshots: {} },
+      deletions: [],
+    };
+    const store = new PersistedStore(new FakeDataAdapter({
+      schemaVersion: 1,
+      settings: { ...DEFAULT_SETTINGS, apiUrl: "https://old.example", accountName: "Kept" },
+      state: { cursor: 5, renderSnapshots: {} },
+      finalizationJournal: journal,
+      apiUrl: "https://newer.example",
+    }));
+
+    await expect(store.load()).resolves.toEqual({
+      schemaVersion: 1,
+      settings: { ...DEFAULT_SETTINGS, apiUrl: "https://newer.example", accountName: "Kept" },
+      state: { cursor: 5, renderSnapshots: {} },
+      finalizationJournal: journal,
+    });
+  });
+
+  it("does not rewrite files that are already in the envelope shape", async () => {
+    const adapter = new FakeDataAdapter({ schemaVersion: 1, settings: { ...DEFAULT_SETTINGS }, state: { renderSnapshots: {} } });
+    const store = new PersistedStore(adapter);
+
+    await expect(store.persistIfMigrated()).resolves.toBe(false);
+    expect(adapter.saved).toEqual([]);
+  });
+
+  it("coerces numeric strings and replaces out-of-range or blank values with defaults", async () => {
+    const store = new PersistedStore(new FakeDataAdapter({
+      settings: {
+        syncDaysLimit: "7",
+        startupDelaySeconds: -1,
+        periodicSyncIntervalMinutes: 1_000_000,
+        accountName: "   ",
+        dailyNoteHeader: "##",
+      },
+    }));
+
+    await expect(store.load()).resolves.toMatchObject({
+      settings: {
+        syncDaysLimit: 7,
+        startupDelaySeconds: DEFAULT_SETTINGS.startupDelaySeconds,
+        periodicSyncIntervalMinutes: DEFAULT_SETTINGS.periodicSyncIntervalMinutes,
+        accountName: DEFAULT_SETTINGS.accountName,
+        dailyNoteHeader: DEFAULT_SETTINGS.dailyNoteHeader,
+      },
+    });
+  });
+
+  it("keeps the cache on the last durable value when a save fails", async () => {
+    const adapter = new FakeDataAdapter({ settings: { ...DEFAULT_SETTINGS, accountName: "Durable" } });
+    const store = new PersistedStore(adapter);
+    await store.load();
+
+    adapter.failNextSave = true;
+    await expect(store.saveSettings({ ...DEFAULT_SETTINGS, accountName: "Rejected" })).rejects.toThrow("disk full");
+    await store.updateState((state) => ({ ...state, cursor: 3 }));
+
+    expect(adapter.saved.at(-1)).toMatchObject({ settings: { accountName: "Durable" }, state: { cursor: 3 } });
+  });
+
+  it("reloads externally changed data after pending writes settle", async () => {
+    const adapter = new FakeDataAdapter({ settings: { ...DEFAULT_SETTINGS, accountName: "Local" } });
+    const store = new PersistedStore(adapter);
+    await store.load();
+
+    adapter.loaded = { settings: { ...DEFAULT_SETTINGS, accountName: "Synced" }, state: { cursor: 8, renderSnapshots: {} } };
+    await expect(store.reload()).resolves.toMatchObject({ settings: { accountName: "Synced" }, state: { cursor: 8 } });
+    await expect(store.load()).resolves.toMatchObject({ settings: { accountName: "Synced" } });
   });
 });

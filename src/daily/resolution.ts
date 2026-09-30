@@ -5,8 +5,11 @@ export interface DailyNotesPort {
   isAvailable(): boolean;
   listExisting(): Promise<Array<{ date: string; path: string }>>;
   resolve(date: string, createIfMissing: boolean): Promise<string | undefined>;
-  read(path: string): Promise<string>;
-  write(path: string, content: string): Promise<void>;
+  /**
+   * Atomically rewrites the note from its current content; resolves true when the content changed.
+   * `transform` must have run exactly once by the time the promise resolves.
+   */
+  update(path: string, transform: (content: string) => string): Promise<boolean>;
 }
 
 export async function resolveDailyNotePaths(
