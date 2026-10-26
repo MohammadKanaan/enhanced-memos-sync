@@ -8,7 +8,7 @@ Bring your [Memos](https://github.com/usememos/memos) posts into Obsidian as Mar
 
 ## Get started
 
-You need Obsidian 1.6.6 or later on desktop, a reachable Memos server, and an API token from **Memos > Settings > Access Tokens**. Enable Daily Notes or Periodic Notes in Obsidian; sync needs it to link memos by day.
+You need Obsidian 1.6.6 or later on desktop or mobile, a reachable Memos server, and an API token from **Memos > Settings > Access Tokens**. Enable Daily Notes or Periodic Notes in Obsidian; sync needs it to link memos by day.
 
 1. Install **Enhanced Memos Sync** from **Settings > Community Plugins > Browse**. You can also build it as described in [Development](#development).
 2. In the plugin settings, enter your Memos server URL and API token. Choose folders for notes and attachments if you don't want the defaults.
@@ -32,7 +32,7 @@ Memo notes are saved in `Memos/` by default, with names like `2026-01-20-1768867
 
 The plugin sends no telemetry or vault data to third parties. On Obsidian 1.11.4 and later, it stores your API token in Secret Storage; on older versions, the token is saved in the plugin's data.
 
-If a sync fails, open the developer console with Ctrl/Cmd+Shift+I and look for `[Enhanced Memos Sync]`. Turn on **Debug logging** in settings for warnings and per-item details.
+If a sync fails, open the developer console with Ctrl/Cmd+Shift+I and look for `[Enhanced Memos Sync]`. Turn on **Debug logging** in settings for warnings and per-item details. On mobile there is no developer console, and only the summary notice is shown.
 
 ## Development
 

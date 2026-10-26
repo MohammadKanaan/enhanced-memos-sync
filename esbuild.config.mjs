@@ -1,5 +1,4 @@
 import esbuild from "esbuild";
-import { builtinModules } from "node:module";
 
 const prod = process.argv[2] === "production";
 
@@ -23,13 +22,12 @@ const context = await esbuild.context({
     "@lezer/common",
     "@lezer/highlight",
     "@lezer/lr",
-    ...builtinModules,
   ],
   format: "cjs",
   logLevel: "info",
   minify: prod,
   outfile: "main.js",
-  platform: "node",
+  platform: "browser",
   sourcemap: prod ? false : "inline",
   target: "es2021",
   treeShaking: true,

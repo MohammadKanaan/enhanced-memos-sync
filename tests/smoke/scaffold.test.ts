@@ -13,7 +13,7 @@ describe("plugin scaffold", () => {
       name: "Enhanced Memos Sync",
       minAppVersion: "1.6.6",
       author: "Mohammad Kanaan",
-      isDesktopOnly: true,
+      isDesktopOnly: false,
     });
   });
 
